@@ -15,5 +15,6 @@ Thumbs.db
 
 # Runtime / regenerable artifacts
 data/mc_cache/
+data/purchase_cache/
 logs/
 experiment_log.json

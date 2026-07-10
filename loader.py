@@ -43,12 +43,22 @@ def load_draws(game: GameConfig) -> List[Draw]:
 def filter_era(draws: List[Draw], game: GameConfig) -> List[Draw]:
     return [d for d in draws if d[0] >= game.era_start]
 
+# Chronological rank of each multi-daily slot. Sort key so the walk-forward
+# S1 for a same-day evening draw actually sees that day's morning result
+# before scoring — alphabetic sort had "Day" < "Evening" < "Morning" which
+# is wrong (Morning is chronologically first).
+_SLOT_RANK = {"Morning": 0, "Day": 1, "Evening": 2, "Night": 3}
+
 def load_draws_full(game: GameConfig) -> List[dict]:
     """Return list of dicts: {date, slot, main, bonus} for the era.
 
     - `slot` is the capitalized slot name (Morning/Day/Evening/Night) for
       multi-file games, or None for single-file games.
     - `bonus` is the bonus-ball integer for games with bonus_n>0, else None.
+
+    Sorted by (date, slot_rank) — for multi-daily games this preserves
+    chronological order within a date so downstream walk-forward code sees
+    same-day draws in the order they actually happened.
     """
     out: List[dict] = []
     multi = len(game.csv_paths) > 1
@@ -97,7 +107,8 @@ def load_draws_full(game: GameConfig) -> List[dict]:
                             pass
                 out.append({"date": dt, "slot": slot,
                             "main": main, "bonus": bonus})
-    return sorted(out, key=lambda r: (r["date"], r["slot"] or ""))
+    return sorted(out, key=lambda r: (r["date"],
+                                       _SLOT_RANK.get(r["slot"], 0)))
 
 def load_bonus_ball(game: GameConfig) -> List[int]:
     """Return the bonus-ball values for a game, filtered to era. Empty list

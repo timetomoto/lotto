@@ -165,8 +165,10 @@ st.markdown(
       div[data-testid="stMarkdownContainer"] p:has(strong:first-child) {
           margin-top: 1.1rem;
       }
-      /* Tab split — push the 4th tab and everything after it to the right */
-      div[data-baseweb="tab-list"] button[data-baseweb="tab"]:nth-child(4) {
+      /* Tab split — push the 5th tab and everything after it to the right
+         (user tools: Overview / Schedule / Check Numbers / Purchases on
+         the left; analytical: Audit / Experiment / Methods on the right). */
+      div[data-baseweb="tab-list"] button[data-baseweb="tab"]:nth-child(5) {
           margin-left: auto;
       }
       /* Overview cards live inside stColumn — Streamlit's default 1rem
@@ -292,9 +294,9 @@ with header_r:
             except subprocess.TimeoutExpired:
                 st.error("Refresh timed out after 60s.")
 
-(tab_overview, tab_schedule, tab_check, tab_audit,
+(tab_overview, tab_schedule, tab_check, tab_purchases, tab_audit,
  tab_experiment, tab_methods) = st.tabs(
-    ["Overview", "Schedule", "Check Numbers", "Audit",
+    ["Overview", "Schedule", "Check Numbers", "Purchases", "Audit",
      "Experiment", "Methods"]
 )
 
@@ -372,6 +374,19 @@ def render_overview_card(g_name: str):
         f"</a></h3>",
         unsafe_allow_html=True,
     )
+    # Estimated top prize — prominent, immediately under the title.
+    # Live-scraped from texaslottery.com for rolling jackpots; static
+    # string for fixed-prize games. Silent-hide on any scrape failure.
+    top_prize = _top_prize_cached(g_name)
+    if top_prize:
+        st.markdown(
+            f"<div style='margin:0 0 0.3rem 0;font-size:0.95rem;'>"
+            f"<span style='color:#8a8a8a;'>Estimated top prize: </span>"
+            f"<b style='color:#22c55e;'>{top_prize}</b>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
     st.caption(
         f"{fmt} · {g_cfg.schedule} · {g_cfg.ticket_cost} · "
         f"{len(era_d):,} draws since {g_cfg.era_start.strftime('%b %Y')}"
@@ -514,18 +529,6 @@ def render_overview_card(g_name: str):
     info = GAME_INFO.get(g_name)
     if info:
         with st.expander("How to play & prizes"):
-            # Dynamic estimated top prize (grey label + green bold value).
-            # Scraped from texaslottery.com for rolling jackpots; static for
-            # fixed-prize games. Failure = silently hide the row.
-            top_prize = _top_prize_cached(g_name)
-            if top_prize:
-                st.markdown(
-                    f"<div style='margin-bottom:0.6rem;'>"
-                    f"<span style='color:#8a8a8a;'>Estimated top prize: </span>"
-                    f"<b style='color:#22c55e;'>{top_prize}</b>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
             st.markdown("**How to play**")
             st.write(info["how_to_play"])
             st.markdown("**Prize tiers**")
@@ -950,6 +953,178 @@ with tab_check:
             dollar_play=dollar_play,
         )
         _result_dialog(result, check_g, chosen, user_main, user_bonus)
+
+# ==================================================================
+# Purchases — retrospective ticket-simulation log across every game
+# ==================================================================
+
+with tab_purchases:
+    from purchases import (
+        simulate_game, summarize, PLAY_TYPE_LABEL, COST_PER_TICKET,
+    )
+    from datetime import date as _date, timedelta as _timedelta
+
+    st.subheader("Simulated purchase log")
+    st.write(
+        "For every historical draw, this tab simulates buying one base "
+        "ticket using **S1 as it would have appeared in the app at that "
+        "draw's date** — no lookahead, no add-ons (Extra!, Power Play, "
+        "Megaplier, Fireball). It's the honest retrospective answer to "
+        "*'what if I'd been playing along using the app's numbers?'*"
+    )
+
+    # -------------------- Filters --------------------
+    f1, f2 = st.columns([2, 1])
+    with f1:
+        game_choice = st.selectbox(
+            "Game", ["All games"] + list(GAMES.keys()),
+            key="purchases_game",
+        )
+    with f2:
+        range_choice = st.radio(
+            "Date range",
+            ["All", "Last 30 days", "Last 90 days", "This year", "Custom"],
+            horizontal=True,
+            key="purchases_range",
+        )
+
+    custom_start = None
+    custom_end = None
+    if range_choice == "Custom":
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            custom_start = st.date_input("From",
+                                          value=_date.today() - _timedelta(days=365),
+                                          key="purch_from")
+        with cc2:
+            custom_end = st.date_input("To", value=_date.today(),
+                                        key="purch_to")
+
+    # -------------------- Load & filter records --------------------
+    with st.spinner("Computing walk-forward purchase log (cached after "
+                    "first run per game)..."):
+        if game_choice == "All games":
+            all_records = []
+            for name in GAMES:
+                for r in simulate_game(name):
+                    all_records.append({**r, "game": name})
+        else:
+            all_records = [{**r, "game": game_choice}
+                           for r in simulate_game(game_choice)]
+
+    today = _date.today()
+    if range_choice == "Last 30 days":
+        cutoff = today - _timedelta(days=30)
+        recs = [r for r in all_records
+                if _date.fromisoformat(r["date"]) >= cutoff]
+    elif range_choice == "Last 90 days":
+        cutoff = today - _timedelta(days=90)
+        recs = [r for r in all_records
+                if _date.fromisoformat(r["date"]) >= cutoff]
+    elif range_choice == "This year":
+        cutoff = _date(today.year, 1, 1)
+        recs = [r for r in all_records
+                if _date.fromisoformat(r["date"]) >= cutoff]
+    elif range_choice == "Custom" and custom_start and custom_end:
+        recs = [r for r in all_records
+                if custom_start <= _date.fromisoformat(r["date"]) <= custom_end]
+    else:
+        recs = all_records
+    recs.sort(key=lambda r: (r["date"], r.get("slot") or ""), reverse=True)
+
+    # -------------------- Summary --------------------
+    summ = summarize(recs)
+    st.markdown("### Summary")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Tickets bought", f"{summ['n_tickets']:,}")
+    m2.metric("Total spent", f"${summ['total_spent']:,.2f}")
+    m3.metric("Total won (fixed)", f"${summ['total_winnings_fixed']:,.2f}")
+    m4.metric("Net", f"${summ['net']:,.2f}",
+              delta="loss" if summ['net'] < 0 else "gain",
+              delta_color="inverse")
+
+    m5, m6, m7 = st.columns(3)
+    m5.metric("Hit rate", f"{summ['hit_rate']*100:.2f}%")
+    m6.metric("Fixed-prize wins", f"{summ['n_fixed_wins']:,}")
+    m7.metric("Non-cash / jackpot tier hits", f"{summ['n_variable_wins']:,}",
+              help="Includes free-ticket wins (Cash Five 2-of-5) and any "
+                   "jackpot / pari-mutuel tier hits — actual dollar value "
+                   "varies per drawing.")
+
+    if summ["best_win"]:
+        b = summ["best_win"]
+        st.success(
+            f"**Best single win:** {b['tier']} → **${b['prize']:,.2f}** "
+            f"({b.get('game', '')}, {b['date']}"
+            + (f", {b['slot']}" if b.get('slot') else "") + ")"
+        )
+
+    with st.expander("Play type per game (what this log simulates)"):
+        rows = [
+            {"Game": g, "Play type": PLAY_TYPE_LABEL[g],
+             "Cost per ticket": f"${COST_PER_TICKET[g]:.2f}"}
+            for g in GAMES
+        ]
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+        st.caption(
+            "Add-ons (Extra!, Power Play, Megaplier, Fireball, Combo, "
+            "Sum It Up!) are NOT modelled. Real-world payouts with any of "
+            "those enabled would be higher."
+        )
+
+    # -------------------- Log --------------------
+    st.markdown("### Log")
+    st.caption(f"{len(recs):,} records after filters, most recent first. "
+               "Non-winning rows are shown too so you can see the full "
+               "cadence.")
+
+    if not recs:
+        st.info("No records match those filters.")
+    else:
+        PAGE_SIZE = 200
+        max_page = max(1, (len(recs) - 1) // PAGE_SIZE + 1)
+        page = st.number_input(
+            f"Page (1 – {max_page}, {PAGE_SIZE}/page)",
+            min_value=1, max_value=int(max_page), value=1, step=1,
+            key="purch_page",
+        )
+        start = (int(page) - 1) * PAGE_SIZE
+        end = start + PAGE_SIZE
+        page_rows = []
+        for r in recs[start:end]:
+            def fmt_seq(seq):
+                if r["game"] in ("Pick 3", "Daily 4"):
+                    return "-".join(str(x) for x in seq)
+                return " ".join(f"{x:>2}" for x in sorted(seq)) \
+                       if r["game"] != "Pick 3" and r["game"] != "Daily 4" \
+                       else "-".join(str(x) for x in seq)
+            s1_str = ("-".join(str(x) for x in r["s1"])
+                      if r["game"] in ("Pick 3", "Daily 4")
+                      else " ".join(str(x) for x in sorted(r["s1"])))
+            draw_str = ("-".join(str(x) for x in r["draw_main"])
+                        if r["game"] in ("Pick 3", "Daily 4")
+                        else " ".join(str(x) for x in sorted(r["draw_main"])))
+            if r.get("user_bonus") is not None:
+                s1_str += f"  +B{r['user_bonus']}"
+            if r.get("draw_bonus") is not None:
+                draw_str += f"  +B{r['draw_bonus']}"
+            if isinstance(r["prize"], (int, float)) and r["prize"] > 0:
+                prize_str = f"${r['prize']:,.2f}"
+            elif r["prize"] is None:
+                prize_str = "(varies)"
+            else:
+                prize_str = "—"
+            page_rows.append({
+                "Date": r["date"] + (f" · {r['slot']}" if r.get("slot") else ""),
+                "Game": r["game"],
+                "S1 played": s1_str,
+                "Winning": draw_str,
+                "Tier": r["tier"],
+                "Prize": prize_str,
+                "Cost": f"${r['cost']:.2f}",
+            })
+        st.dataframe(pd.DataFrame(page_rows),
+                     width="stretch", hide_index=True)
 
 # ==================================================================
 # Audit — is this game statistically random?
