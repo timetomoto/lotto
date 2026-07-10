@@ -35,8 +35,8 @@ from mc_null import (
 import os
 from qrng import load_or_pull
 import experiment
-import schedule as sched
-from schedule import next_draw_datetime, draws_for_day, CT
+import draw_schedule as sched
+from draw_schedule import next_draw_datetime, draws_for_day, CT
 from game_info import GAME_INFO
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
