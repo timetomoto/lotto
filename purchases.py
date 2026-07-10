@@ -36,6 +36,7 @@ import hashlib
 import json
 import os
 from collections import Counter
+from datetime import date
 from typing import Dict, List, Optional
 from games import GAMES, GameConfig
 from loader import load_draws_full, load_bonus_ball
@@ -46,6 +47,12 @@ from checker import check_ticket
 
 CACHE_DIR = "data/purchase_cache"
 BURN_IN = 50
+
+# The formal "experiment start" — the date the Purchases tab went live
+# and from which the going-forward simulated tracking begins. Filter the
+# full walk-forward log to this cutoff for the "since experiment started"
+# view. Everything before this cutoff is the "all-time hypothetical" view.
+EXPERIMENT_START = date(2026, 7, 10)
 
 # Per-game display label + numeric cost per single ticket. Numeric cost
 # overrides `ticket_cost_low` for digit games where the base wager we

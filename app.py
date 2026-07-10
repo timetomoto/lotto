@@ -961,16 +961,24 @@ with tab_check:
 with tab_purchases:
     from purchases import (
         simulate_game, summarize, PLAY_TYPE_LABEL, COST_PER_TICKET,
+        EXPERIMENT_START,
     )
     from datetime import date as _date, timedelta as _timedelta
 
-    st.subheader("Simulated purchase log")
+    st.subheader("Simulated purchases")
     st.write(
-        "For every historical draw, this tab simulates buying one base "
-        "ticket using **S1 as it would have appeared in the app at that "
-        "draw's date** — no lookahead, no add-ons (Extra!, Power Play, "
-        "Megaplier, Fireball). It's the honest retrospective answer to "
-        "*'what if I'd been playing along using the app's numbers?'*"
+        "Two views of the same underlying walk-forward simulation:\n\n"
+        f"- **Since experiment started ({EXPERIMENT_START.isoformat()})** — "
+        f"the live going-forward tracking log. Every real draw from "
+        f"{EXPERIMENT_START.strftime('%b %d, %Y')} onward, scored against "
+        f"S1 as it appeared in the app at that draw's date.\n"
+        f"- **All-time hypothetical** — same simulation extended back "
+        "across each game's full walk-forward era. What playing along with "
+        "the app *would* have looked like if it had existed all these "
+        "years.\n\n"
+        "Both use one base ticket per draw, walk-forward S1 (no "
+        "lookahead), no add-ons (Extra! / Power Play / Megaplier / Fireball "
+        "not modelled)."
     )
 
     # -------------------- Filters --------------------
@@ -983,7 +991,8 @@ with tab_purchases:
     with f2:
         range_choice = st.radio(
             "Date range",
-            ["All", "Last 30 days", "Last 90 days", "This year", "Custom"],
+            ["Since experiment started", "All-time hypothetical",
+             "Last 30 days", "Last 90 days", "This year", "Custom"],
             horizontal=True,
             key="purchases_range",
         )
@@ -994,7 +1003,7 @@ with tab_purchases:
         cc1, cc2 = st.columns(2)
         with cc1:
             custom_start = st.date_input("From",
-                                          value=_date.today() - _timedelta(days=365),
+                                          value=EXPERIMENT_START,
                                           key="purch_from")
         with cc2:
             custom_end = st.date_input("To", value=_date.today(),
@@ -1013,7 +1022,10 @@ with tab_purchases:
                            for r in simulate_game(game_choice)]
 
     today = _date.today()
-    if range_choice == "Last 30 days":
+    if range_choice == "Since experiment started":
+        recs = [r for r in all_records
+                if _date.fromisoformat(r["date"]) >= EXPERIMENT_START]
+    elif range_choice == "Last 30 days":
         cutoff = today - _timedelta(days=30)
         recs = [r for r in all_records
                 if _date.fromisoformat(r["date"]) >= cutoff]
