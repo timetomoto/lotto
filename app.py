@@ -344,9 +344,19 @@ def render_overview_card(g_name: str):
                     unsafe_allow_html=True)
         st.image(img_path, width=355)
 
+    # Title is a link to the official Texas Lottery page for the game.
+    # URL slug is game name with spaces → underscores; matches the same
+    # convention the site itself uses (verified against all 8 games).
+    tx_url = ("https://www.texaslottery.com/export/sites/lottery/Games/"
+              f"{g_name.replace(' ', '_')}/index.html")
     st.markdown(
         f"<h3 style='margin-top:0.35rem !important;margin-bottom:0.2rem;'>"
-        f"{g_name}</h3>",
+        f"<a href='{tx_url}' target='_blank' rel='noopener' "
+        f"style='color:inherit;text-decoration:none;'>"
+        f"{g_name}"
+        f"<span style='font-size:0.6em;opacity:0.55;margin-left:0.4em;'>"
+        f"↗</span>"
+        f"</a></h3>",
         unsafe_allow_html=True,
     )
     st.caption(
