@@ -1051,9 +1051,12 @@ with tab_purchases:
     m1.metric("Tickets bought", f"{summ['n_tickets']:,}")
     m2.metric("Total spent", f"${summ['total_spent']:,.2f}")
     m3.metric("Total won (fixed)", f"${summ['total_winnings_fixed']:,.2f}")
-    m4.metric("Net", f"${summ['net']:,.2f}",
-              delta="loss" if summ['net'] < 0 else "gain",
-              delta_color="inverse")
+    # Streamlit reads the arrow direction from a leading +/- on the delta
+    # string; "loss" alone rendered as up-arrow. Explicit signs fix it.
+    m4.metric(
+        "Net", f"${summ['net']:,.2f}",
+        delta=("-loss" if summ['net'] < 0 else "+gain"),
+    )
 
     m5, m6, m7 = st.columns(3)
     m5.metric("Hit rate", f"{summ['hit_rate']*100:.2f}%")
