@@ -104,9 +104,11 @@ def _countdown_html(dt: datetime, label: str = "Next draw") -> str:
 </script></body></html>"""
 
 def render_next_draw(game_cfg, now_ct: datetime | None = None) -> None:
-    """Render the next-draw line for a game. Static text if the draw is more
-    than COUNTDOWN_WINDOW_MIN minutes away; live-updating countdown widget
-    otherwise. No-op for games without configured draw_times."""
+    """Render the next-draw line for a game.
+      - Live countdown widget if the draw is within COUNTDOWN_WINDOW_MIN.
+      - Static yellow text if the draw is later today (visual emphasis).
+      - Static muted text if the draw is on a future day.
+    No-op for games without configured draw_times."""
     if now_ct is None:
         now_ct = datetime.now(CT)
     dt = next_draw_datetime(game_cfg, now_ct)
@@ -115,13 +117,17 @@ def render_next_draw(game_cfg, now_ct: datetime | None = None) -> None:
     minutes = (dt - now_ct).total_seconds() / 60.0
     if minutes <= COUNTDOWN_WINDOW_MIN:
         components.html(_countdown_html(dt), height=32)
-    else:
-        st.markdown(
-            f"<div style='font-size:0.85rem;opacity:0.75;"
-            f"margin-top:0.1rem;'>Next draw: <b>{_fmt_draw_static(dt, now_ct)}"
-            f"</b></div>",
-            unsafe_allow_html=True,
-        )
+        return
+    is_today = dt.date() == now_ct.date()
+    # Yellow (#ffcc00) matches the countdown widget's active-state color.
+    color = "#ffcc00" if is_today else None
+    style = ("font-size:0.85rem;margin-top:0.1rem;"
+             + (f"color:{color};" if color else "opacity:0.75;"))
+    st.markdown(
+        f"<div style='{style}'>Next draw: "
+        f"<b>{_fmt_draw_static(dt, now_ct)}</b></div>",
+        unsafe_allow_html=True,
+    )
 
 def _maybe_auto_refresh() -> None:
     if st.session_state.get("_auto_refresh_ran"):
@@ -694,19 +700,20 @@ with tab_check:
             s += f"  (+ {r['bonus']})"
         return s
 
-    # Recent-first, cap to last 300 to keep the selectbox usable.
-    # Options are a concrete list of ints (not a range) — Python 3.14 on
-    # Streamlit Cloud rejects range objects during widget-state
-    # serialization.
+    # Recent-first, cap to last 300 to keep the selectbox usable. Options
+    # are the label strings directly — Python 3.14 on Streamlit Cloud
+    # throws TypeError during widget-state serialization when a selectbox
+    # uses non-string options + format_func, so we avoid that combination
+    # entirely and map the selected label back to a draw via a dict.
     recent = list(reversed(full_rows))[:300]
     labels = [_draw_label(r) for r in recent]
-    idx = st.selectbox(
+    label_to_draw = dict(zip(labels, recent))
+    selected_label = st.selectbox(
         "Draw to check against",
-        list(range(len(recent))),
-        format_func=lambda i: labels[i],
-        key="check_draw_idx",
+        labels,
+        key="check_draw_label",
     )
-    chosen = recent[idx]
+    chosen = label_to_draw[selected_label]
 
     # -------- Game-specific input widgets --------
     st.markdown("**Your ticket**")
@@ -740,12 +747,14 @@ with tab_check:
                 else DAILY4_PLAY_TYPES,
                 key="check_play_type",
             )
-            dollar_play = st.radio(
-                "Wager", [1.0, 0.5],
-                format_func=lambda v: f"${v:.2f}",
+            # String options avoid the same non-string+format_func pattern
+            # that broke the draw selector on Python 3.14 Cloud.
+            wager_choice = st.radio(
+                "Wager", ["$1.00", "$0.50"],
                 horizontal=True,
                 key="check_wager",
             )
+            dollar_play = 1.0 if wager_choice == "$1.00" else 0.5
         digits = _parse_int_list(digits_str)
         if len(digits) == check_g.k_main and all(0 <= d <= 9 for d in digits):
             user_main = tuple(digits)
