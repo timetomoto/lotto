@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit local secrets (do not commit)
+.streamlit/secrets.toml
+
+# Runtime / regenerable artifacts
+data/mc_cache/
+logs/
+experiment_log.json
