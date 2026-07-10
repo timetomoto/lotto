@@ -4,13 +4,16 @@ The upcoming schedule is computed from `draw_weekdays` and `draws_per_day` in
 each `GameConfig`. Multi-daily games (All or Nothing, Pick 3, Daily 4) are
 listed as a single row per day with a note on the four draw times.
 
-Draw times reflect the Texas Lottery's published cadence but are not stored
-per-draw in the CSVs, so this module treats each draw day as one row.
+`next_draw_datetime` returns the next scheduled draw as a timezone-aware
+datetime in America/Chicago, honoring the game's `draw_times` and DST.
 """
 from __future__ import annotations
-from datetime import date, timedelta
-from typing import List, Dict
+from datetime import date, datetime, time, timedelta
+from typing import List, Dict, Optional
+from zoneinfo import ZoneInfo
 from games import GAMES, GameConfig
+
+CT = ZoneInfo("America/Chicago")
 
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
         "Saturday", "Sunday"]
@@ -45,6 +48,38 @@ def upcoming_draws(days_ahead: int = 14, start: date | None = None,
                 "cost_display": g.ticket_cost,
             })
     return rows
+
+def next_draw_datetime(game: GameConfig,
+                       now_ct: Optional[datetime] = None
+                       ) -> Optional[datetime]:
+    """Return the next scheduled draw as a tz-aware datetime in
+    America/Chicago, honoring the game's draw_weekdays and draw_times.
+    Returns None if the game has no configured draw times (shouldn't
+    happen for current games)."""
+    if not game.draw_times or not game.draw_weekdays:
+        return None
+    if now_ct is None:
+        now_ct = datetime.now(CT)
+    # Look up to 8 days ahead — enough to skip Sunday even in edge cases.
+    for days_ahead in range(0, 9):
+        day = (now_ct + timedelta(days=days_ahead)).date()
+        if day.weekday() not in game.draw_weekdays:
+            continue
+        for t_str in game.draw_times:
+            hh, mm = (int(x) for x in t_str.split(":"))
+            dt = datetime.combine(day, time(hh, mm), tzinfo=CT)
+            if dt > now_ct:
+                return dt
+    return None
+
+def draws_for_day(game: GameConfig, day: date) -> List[datetime]:
+    """All scheduled draw datetimes (tz-aware CT) for a specific day, in
+    order. Empty list if the game doesn't draw that weekday."""
+    if day.weekday() not in game.draw_weekdays or not game.draw_times:
+        return []
+    return [datetime.combine(day, time(*(int(x) for x in t.split(":"))),
+                              tzinfo=CT)
+            for t in game.draw_times]
 
 def per_day_cost(games_playing: List[str], date_: date) -> float:
     """Minimum daily spend if playing one ticket for every scheduled draw

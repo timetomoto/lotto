@@ -36,7 +36,10 @@ import os
 from qrng import load_or_pull
 import experiment
 import schedule as sched
+from schedule import next_draw_datetime, draws_for_day, CT
 from game_info import GAME_INFO
+import streamlit.components.v1 as components
+from datetime import datetime, timedelta
 
 st.set_page_config(
     page_title="Texas Lottery Randomness Auditor",
@@ -52,6 +55,73 @@ st.set_page_config(
 # ------------------------------------------------------------------
 
 STALE_HOURS = 24
+
+# ------------------------------------------------------------------
+# Draw-time display helpers — static "Next draw: ..." + live countdown
+# ------------------------------------------------------------------
+
+COUNTDOWN_WINDOW_MIN = 60   # switch from static to live countdown when
+                            # the next draw is within this many minutes
+
+def _fmt_draw_static(dt: datetime, now_ct: datetime) -> str:
+    """Short human string like 'today 10:12 PM CT' or 'Fri Jul 17 10:12 PM CT'."""
+    same_day = dt.date() == now_ct.date()
+    tomorrow = dt.date() == (now_ct.date() + timedelta(days=1))
+    tm = dt.strftime("%-I:%M %p")
+    if same_day:
+        prefix = "today"
+    elif tomorrow:
+        prefix = "tomorrow"
+    else:
+        prefix = dt.strftime("%a %b %-d")
+    return f"{prefix} {tm} CT"
+
+def _countdown_html(dt: datetime, label: str = "Next draw") -> str:
+    """Live-updating JS countdown to `dt`. Rendered inside a components.html
+    iframe so its <script> can execute."""
+    target_iso = dt.isoformat()
+    return f"""
+<!doctype html><html><body style='margin:0;padding:0;font-family:
+  -apple-system, "Segoe UI", sans-serif;color:#eee;background:transparent;'>
+<div style='font-size:0.85rem;padding:2px 0;'>
+  <span style='opacity:0.75;'>{label}:</span>
+  <b id='cd' style='color:#ffcc00;'>—</b>
+  <span style='opacity:0.6;font-size:0.8em;'>({dt.strftime("%-I:%M %p")} CT)</span>
+</div>
+<script>
+  (function() {{
+    const target = new Date("{target_iso}").getTime();
+    const el = document.getElementById("cd");
+    function tick() {{
+      const diff = target - Date.now();
+      if (diff <= 0) {{ el.textContent = "drawing now"; return; }}
+      const m = Math.floor(diff / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      el.textContent = m + "m " + String(s).padStart(2, "0") + "s";
+    }}
+    tick(); setInterval(tick, 1000);
+  }})();
+</script></body></html>"""
+
+def render_next_draw(game_cfg, now_ct: datetime | None = None) -> None:
+    """Render the next-draw line for a game. Static text if the draw is more
+    than COUNTDOWN_WINDOW_MIN minutes away; live-updating countdown widget
+    otherwise. No-op for games without configured draw_times."""
+    if now_ct is None:
+        now_ct = datetime.now(CT)
+    dt = next_draw_datetime(game_cfg, now_ct)
+    if dt is None:
+        return
+    minutes = (dt - now_ct).total_seconds() / 60.0
+    if minutes <= COUNTDOWN_WINDOW_MIN:
+        components.html(_countdown_html(dt), height=32)
+    else:
+        st.markdown(
+            f"<div style='font-size:0.85rem;opacity:0.75;"
+            f"margin-top:0.1rem;'>Next draw: <b>{_fmt_draw_static(dt, now_ct)}"
+            f"</b></div>",
+            unsafe_allow_html=True,
+        )
 
 def _maybe_auto_refresh() -> None:
     if st.session_state.get("_auto_refresh_ran"):
@@ -283,6 +353,7 @@ def render_overview_card(g_name: str):
         f"{fmt} · {g_cfg.schedule} · {g_cfg.ticket_cost} · "
         f"{len(era_d):,} draws since {g_cfg.era_start.strftime('%b %Y')}"
     )
+    render_next_draw(g_cfg)
     st.markdown("**Most-frequent (S1)**")
     if g_cfg.game_type == "digit":
         seq_html = " &nbsp; ".join(
@@ -503,6 +574,26 @@ with tab_schedule:
             f"{day_draws} draw{'s' if day_draws != 1 else ''}, "
             f"min. ${day_cost:.2f}"
         )
+        # If any game has a draw within the countdown window today, surface
+        # the soonest one as a live-updating widget above the table.
+        now_ct = datetime.now(CT)
+        if dt == now_ct.date():
+            imminent = []
+            for g_name, g in GAMES.items():
+                nd = next_draw_datetime(g, now_ct)
+                if nd is not None and nd.date() == dt:
+                    minutes = (nd - now_ct).total_seconds() / 60.0
+                    if 0 <= minutes <= COUNTDOWN_WINDOW_MIN:
+                        imminent.append((nd, g_name))
+            if imminent:
+                imminent.sort()
+                soonest_dt, soonest_game = imminent[0]
+                components.html(
+                    _countdown_html(soonest_dt,
+                                    label=f"Next up: {soonest_game}"),
+                    height=32,
+                )
+
         rows = []
         for r in day_rows:
             g = GAMES[r["game"]]
@@ -517,13 +608,19 @@ with tab_schedule:
                 cost_str = (f"${r['cost_low']:.2f} × {per_day} = "
                             f"${r['cost_low'] * per_day:.2f}"
                             if per_day > 1 else f"${r['cost_low']:.2f}")
+                times_str = " · ".join(
+                    datetime.strptime(t, "%H:%M").strftime("%-I:%M %p")
+                    for t in g.draw_times
+                )
             else:
                 daily_val = "—"
                 cost_str = "—"
+                times_str = "—"
             rows.append({
                 "Game": r["game"],
                 "Candidate (S1)": seq_str,
                 "Daily draws": daily_val,
+                "Times (CT)": times_str,
                 "Min cost": cost_str,
                 "_active": r["active"],  # hidden helper for styling
             })

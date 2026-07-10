@@ -31,6 +31,7 @@ class GameConfig:
     ticket_cost: str = ""            # display string, e.g. "$1" or "$0.50+"
     draw_weekdays: tuple = ()        # 0=Mon..6=Sun, weekdays on which the game draws
     draws_per_day: int = 1           # 1 for standard games, 4 for morning/day/evening/night
+    draw_times: tuple = ()           # "HH:MM" in Central Time, per draw slot per day
     ticket_cost_low: float = 0.0     # numeric single-play cost (for total-cost calc)
     kn_experiment_ok: bool = True    # whether tracking-experiment is meaningful
     bonus_n: int = 0                 # 0 = no bonus ball; else the bonus-pool size
@@ -48,6 +49,7 @@ GAMES = {
         schedule="Mon / Wed / Sat", draws_per_week=3,
         ticket_cost="$1 per play", ticket_cost_low=1.0,
         draw_weekdays=(0, 2, 5), draws_per_day=1,
+        draw_times=("22:12",),
     ),
     "Mega Millions": GameConfig(
         name="Mega Millions",
@@ -58,6 +60,7 @@ GAMES = {
         schedule="Tue / Fri", draws_per_week=2,
         ticket_cost="$5 per play", ticket_cost_low=5.0,
         draw_weekdays=(1, 4), draws_per_day=1,
+        draw_times=("22:12",),
         bonus_n=25, bonus_col_offset=0, bonus_label="Mega Ball",
     ),
     "Powerball": GameConfig(
@@ -69,6 +72,7 @@ GAMES = {
         schedule="Mon / Wed / Sat", draws_per_week=3,
         ticket_cost="$2 per play", ticket_cost_low=2.0,
         draw_weekdays=(0, 2, 5), draws_per_day=1,
+        draw_times=("22:12",),
         bonus_n=26, bonus_col_offset=0, bonus_label="Powerball",
     ),
     "Cash Five": GameConfig(
@@ -80,6 +84,7 @@ GAMES = {
         schedule="Mon–Sat (daily)", draws_per_week=6,
         ticket_cost="$1 per play", ticket_cost_low=1.0,
         draw_weekdays=(0, 1, 2, 3, 4, 5), draws_per_day=1,
+        draw_times=("22:12",),
     ),
     "Texas Two Step": GameConfig(
         name="Texas Two Step",
@@ -90,6 +95,7 @@ GAMES = {
         schedule="Mon / Thu", draws_per_week=2,
         ticket_cost="$1 per play", ticket_cost_low=1.0,
         draw_weekdays=(0, 3), draws_per_day=1,
+        draw_times=("22:12",),
         bonus_n=35, bonus_col_offset=0, bonus_label="Bonus Ball",
     ),
     "All or Nothing": GameConfig(
@@ -106,6 +112,7 @@ GAMES = {
         schedule="Mon–Sat × 4 daily draws", draws_per_week=24,
         ticket_cost="$2 per play", ticket_cost_low=2.0,
         draw_weekdays=(0, 1, 2, 3, 4, 5), draws_per_day=4,
+        draw_times=("10:00", "12:27", "18:00", "22:12"),
     ),
     # ---- Digit games (audit only; tracking not applicable) ----
     "Pick 3": GameConfig(
@@ -122,6 +129,7 @@ GAMES = {
         schedule="Mon–Sat × 4 draws", draws_per_week=24,
         ticket_cost="$0.50 – $5 per play", ticket_cost_low=0.5,
         draw_weekdays=(0, 1, 2, 3, 4, 5), draws_per_day=4,
+        draw_times=("10:00", "12:27", "18:00", "22:12"),
         kn_experiment_ok=False,
     ),
     "Daily 4": GameConfig(
@@ -138,6 +146,7 @@ GAMES = {
         schedule="Mon–Sat × 4 draws", draws_per_week=24,
         ticket_cost="$0.50 – $5 per play", ticket_cost_low=0.5,
         draw_weekdays=(0, 1, 2, 3, 4, 5), draws_per_day=4,
+        draw_times=("10:00", "12:27", "18:00", "22:12"),
         kn_experiment_ok=False,
     ),
 }
