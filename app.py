@@ -38,6 +38,7 @@ import experiment
 import draw_schedule as sched
 from draw_schedule import next_draw_datetime, draws_for_day, CT
 from game_info import GAME_INFO
+from prize_scraper import fetch_top_prize, game_url as tx_game_url
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 
@@ -220,6 +221,12 @@ def _get_draws_cached(game_key: str, sig: tuple):
 
 def get_draws(game_key: str):
     return _get_draws_cached(game_key, _csv_signature(game_key))
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _top_prize_cached(game_name: str) -> str | None:
+    """Wrapped so Streamlit caches the scrape with a 30-min TTL — the
+    official jackpot doesn't move faster than that."""
+    return fetch_top_prize(game_name)
 
 @st.cache_data
 def _get_bonus_cached(game_key: str, sig: tuple):
@@ -507,6 +514,18 @@ def render_overview_card(g_name: str):
     info = GAME_INFO.get(g_name)
     if info:
         with st.expander("How to play & prizes"):
+            # Dynamic estimated top prize (grey label + green bold value).
+            # Scraped from texaslottery.com for rolling jackpots; static for
+            # fixed-prize games. Failure = silently hide the row.
+            top_prize = _top_prize_cached(g_name)
+            if top_prize:
+                st.markdown(
+                    f"<div style='margin-bottom:0.6rem;'>"
+                    f"<span style='color:#8a8a8a;'>Estimated top prize: </span>"
+                    f"<b style='color:#22c55e;'>{top_prize}</b>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
             st.markdown("**How to play**")
             st.write(info["how_to_play"])
             st.markdown("**Prize tiers**")
@@ -516,6 +535,15 @@ def render_overview_card(g_name: str):
             )
             if info.get("odds_note"):
                 st.caption(info["odds_note"])
+            # Official-page link at the bottom of the section.
+            st.markdown(
+                f"<div style='margin-top:0.8rem;font-size:0.85rem;'>"
+                f"<a href='{tx_game_url(g_name)}' target='_blank' "
+                f"rel='noopener' style='color:#8a8a8a;'>"
+                f"See official {g_name} page ↗"
+                f"</a></div>",
+                unsafe_allow_html=True,
+            )
 
     # Bottom margin of the card — takes the place of the space that used
     # to sit above (reversed relative to before).
