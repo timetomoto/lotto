@@ -694,12 +694,15 @@ with tab_check:
             s += f"  (+ {r['bonus']})"
         return s
 
-    # Recent-first, cap to last 300 to keep the selectbox usable
+    # Recent-first, cap to last 300 to keep the selectbox usable.
+    # Options are a concrete list of ints (not a range) — Python 3.14 on
+    # Streamlit Cloud rejects range objects during widget-state
+    # serialization.
     recent = list(reversed(full_rows))[:300]
     labels = [_draw_label(r) for r in recent]
     idx = st.selectbox(
         "Draw to check against",
-        range(len(recent)),
+        list(range(len(recent))),
         format_func=lambda i: labels[i],
         key="check_draw_idx",
     )

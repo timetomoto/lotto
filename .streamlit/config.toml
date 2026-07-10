@@ -1,0 +1,6 @@
+# Force dark theme regardless of the visitor's OS preference. Without this,
+# Streamlit follows the browser's prefers-color-scheme media query, so users
+# on light-mode systems see a light background even though the app was
+# designed against the dark palette.
+[theme]
+base = "dark"
