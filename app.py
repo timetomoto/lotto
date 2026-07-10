@@ -44,6 +44,38 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# ------------------------------------------------------------------
+# Auto-refresh-if-stale — kick off download_data.sh once per session
+# if the newest CSV on disk is more than STALE_HOURS old. Failure is
+# silent (falls back to whatever's on disk — either git-committed
+# baseline or the last successful refresh in this container).
+# ------------------------------------------------------------------
+
+STALE_HOURS = 24
+
+def _maybe_auto_refresh() -> None:
+    if st.session_state.get("_auto_refresh_ran"):
+        return
+    st.session_state["_auto_refresh_ran"] = True
+    import glob, subprocess, pathlib, time as _time
+    csvs = glob.glob("data/*.csv")
+    if not csvs:
+        return
+    newest = max(os.path.getmtime(p) for p in csvs)
+    if (_time.time() - newest) / 3600.0 < STALE_HOURS:
+        return
+    script = pathlib.Path(__file__).parent / "download_data.sh"
+    if not script.exists():
+        return
+    try:
+        subprocess.run(["bash", str(script)], capture_output=True,
+                       timeout=90, check=False)
+        st.cache_data.clear()
+    except Exception:
+        pass  # keep serving what's on disk
+
+_maybe_auto_refresh()
+
 # Global styling — heading spacing + right-align the last 3 tabs
 # (Audit / Experiment / Methods) to visually separate the analytical
 # section from the user-facing one (Overview / Schedule / Check Numbers).

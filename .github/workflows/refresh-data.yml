@@ -1,0 +1,44 @@
+name: Refresh Texas Lottery data
+
+# Daily at 05:00 UTC (~midnight Central Time — after the previous night's
+# 10:12 PM CT draws have posted). Also runnable manually from the Actions
+# tab via workflow_dispatch.
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed so the workflow's built-in token can push
+
+concurrency:
+  # Prevent overlapping runs if a manual dispatch fires while cron is running.
+  group: refresh-data
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Make download script executable
+        run: chmod +x ./download_data.sh
+
+      - name: Pull latest CSVs from texaslottery.com
+        run: ./download_data.sh
+
+      - name: Commit and push if anything changed
+        run: |
+          set -e
+          # Only look at CSVs; ignore any other churn.
+          if [ -z "$(git status --porcelain data/*.csv)" ]; then
+            echo "No CSV changes to commit."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/*.csv
+          git commit -m "chore(data): refresh Texas Lottery CSVs $(date -u +%Y-%m-%d)"
+          git push
