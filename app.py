@@ -1076,27 +1076,25 @@ with tab_check:
 with tab_purchases:
     from purchases import (
         simulate_game, summarize, PLAY_TYPE_LABEL, COST_PER_TICKET,
-        EXPERIMENT_START,
+        EXPERIMENT_START, STRATEGIES, STRATEGY_LABEL, STRATEGY_TAGLINE,
     )
     from datetime import date as _date, timedelta as _timedelta
 
     st.subheader("Simulated purchases")
     st.write(
-        "Two views of the same underlying walk-forward simulation:\n\n"
+        "Same walk-forward simulation, run three ways so you can compare "
+        "strategies head-to-head over the same time window.\n\n"
         f"- **Since experiment started ({EXPERIMENT_START.isoformat()})** — "
         f"the live going-forward tracking log. Every real draw from "
-        f"{EXPERIMENT_START.strftime('%b %d, %Y')} onward, scored against "
-        f"S1 as it appeared in the app at that draw's date.\n"
-        f"- **All-time hypothetical** — same simulation extended back "
-        "across each game's full walk-forward era. What playing along with "
-        "the app *would* have looked like if it had existed all these "
-        "years.\n\n"
-        "Both use one base ticket per draw, walk-forward S1 (no "
-        "lookahead), no add-ons (Extra! / Power Play / Megaplier / Fireball "
-        "not modelled)."
+        f"{EXPERIMENT_START.strftime('%b %d, %Y')} onward.\n"
+        "- **All-time hypothetical** — extended back across each game's full "
+        "walk-forward era. What playing along with the app *would* have "
+        "looked like if it had existed all these years.\n\n"
+        "One base ticket per draw, no lookahead, no add-ons (Extra! / "
+        "Power Play / Megaplier / Fireball not modelled)."
     )
 
-    # -------------------- Filters --------------------
+    # -------------------- Shared filters (apply to all three tabs) --------
     f1, f2 = st.columns([2, 1])
     with f1:
         game_choice = st.selectbox(
@@ -1124,70 +1122,158 @@ with tab_purchases:
             custom_end = st.date_input("To", value=_date.today(),
                                         key="purch_to")
 
-    # -------------------- Load & filter records --------------------
-    with st.spinner("Computing walk-forward purchase log (cached after "
-                    "first run per game)..."):
+    def _apply_filter(all_records):
+        today = _date.today()
+        if range_choice == "Since experiment started":
+            return [r for r in all_records
+                    if _date.fromisoformat(r["date"]) >= EXPERIMENT_START]
+        if range_choice == "Last 30 days":
+            cutoff = today - _timedelta(days=30)
+            return [r for r in all_records
+                    if _date.fromisoformat(r["date"]) >= cutoff]
+        if range_choice == "Last 90 days":
+            cutoff = today - _timedelta(days=90)
+            return [r for r in all_records
+                    if _date.fromisoformat(r["date"]) >= cutoff]
+        if range_choice == "This year":
+            cutoff = _date(today.year, 1, 1)
+            return [r for r in all_records
+                    if _date.fromisoformat(r["date"]) >= cutoff]
+        if range_choice == "Custom" and custom_start and custom_end:
+            return [r for r in all_records
+                    if custom_start <= _date.fromisoformat(r["date"])
+                                     <= custom_end]
+        return list(all_records)
+
+    def _load_strategy_records(strategy: str):
         if game_choice == "All games":
-            all_records = []
+            recs = []
             for name in GAMES:
-                for r in simulate_game(name):
-                    all_records.append({**r, "game": name})
+                for r in simulate_game(name, strategy=strategy):
+                    recs.append({**r, "game": name})
         else:
-            all_records = [{**r, "game": game_choice}
-                           for r in simulate_game(game_choice)]
+            recs = [{**r, "game": game_choice}
+                    for r in simulate_game(game_choice, strategy=strategy)]
+        return recs
 
-    today = _date.today()
-    if range_choice == "Since experiment started":
-        recs = [r for r in all_records
-                if _date.fromisoformat(r["date"]) >= EXPERIMENT_START]
-    elif range_choice == "Last 30 days":
-        cutoff = today - _timedelta(days=30)
-        recs = [r for r in all_records
-                if _date.fromisoformat(r["date"]) >= cutoff]
-    elif range_choice == "Last 90 days":
-        cutoff = today - _timedelta(days=90)
-        recs = [r for r in all_records
-                if _date.fromisoformat(r["date"]) >= cutoff]
-    elif range_choice == "This year":
-        cutoff = _date(today.year, 1, 1)
-        recs = [r for r in all_records
-                if _date.fromisoformat(r["date"]) >= cutoff]
-    elif range_choice == "Custom" and custom_start and custom_end:
-        recs = [r for r in all_records
-                if custom_start <= _date.fromisoformat(r["date"]) <= custom_end]
-    else:
-        recs = all_records
-    recs.sort(key=lambda r: (r["date"], r.get("slot") or ""), reverse=True)
+    def _render_strategy_view(strategy: str):
+        with st.spinner(f"Computing {STRATEGY_LABEL[strategy]} log "
+                        "(cached after first run per game)..."):
+            all_records = _load_strategy_records(strategy)
+        recs = _apply_filter(all_records)
+        recs.sort(key=lambda r: (r["date"], r.get("slot") or ""), reverse=True)
+        st.caption(STRATEGY_TAGLINE[strategy])
 
-    # -------------------- Summary --------------------
-    summ = summarize(recs)
-    st.markdown("### Summary")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Tickets bought", f"{summ['n_tickets']:,}")
-    m2.metric("Total spent", f"${summ['total_spent']:,.2f}")
-    m3.metric("Total won (fixed)", f"${summ['total_winnings_fixed']:,.2f}")
-    # Streamlit reads the arrow direction from a leading +/- on the delta
-    # string; "loss" alone rendered as up-arrow. Explicit signs fix it.
-    m4.metric(
-        "Net", f"${summ['net']:,.2f}",
-        delta=("-loss" if summ['net'] < 0 else "+gain"),
-    )
-
-    m5, m6, m7 = st.columns(3)
-    m5.metric("Hit rate", f"{summ['hit_rate']*100:.2f}%")
-    m6.metric("Fixed-prize wins", f"{summ['n_fixed_wins']:,}")
-    m7.metric("Non-cash / jackpot tier hits", f"{summ['n_variable_wins']:,}",
-              help="Includes free-ticket wins (Cash Five 2-of-5) and any "
-                   "jackpot / pari-mutuel tier hits — actual dollar value "
-                   "varies per drawing.")
-
-    if summ["best_win"]:
-        b = summ["best_win"]
-        st.success(
-            f"**Best single win:** {b['tier']} → **${b['prize']:,.2f}** "
-            f"({b.get('game', '')}, {b['date']}"
-            + (f", {b['slot']}" if b.get('slot') else "") + ")"
+        # ---- Summary ----
+        summ = summarize(recs)
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Tickets bought", f"{summ['n_tickets']:,}")
+        m2.metric("Total spent", f"${summ['total_spent']:,.2f}")
+        m3.metric("Total won (fixed)", f"${summ['total_winnings_fixed']:,.2f}")
+        m4.metric(
+            "Net", f"${summ['net']:,.2f}",
+            delta=("-loss" if summ['net'] < 0 else "+gain"),
         )
+
+        m5, m6, m7 = st.columns(3)
+        m5.metric("Hit rate", f"{summ['hit_rate']*100:.2f}%")
+        m6.metric("Fixed-prize wins", f"{summ['n_fixed_wins']:,}")
+        m7.metric("Non-cash / jackpot tier hits", f"{summ['n_variable_wins']:,}",
+                  help="Includes free-ticket wins (Cash Five 2-of-5) and any "
+                       "jackpot / pari-mutuel tier hits — actual dollar value "
+                       "varies per drawing.")
+
+        if summ["best_win"]:
+            b = summ["best_win"]
+            st.success(
+                f"**Best single win:** {b['tier']} → **${b['prize']:,.2f}** "
+                f"({b.get('game', '')}, {b['date']}"
+                + (f", {b['slot']}" if b.get('slot') else "") + ")"
+            )
+
+        # ---- Log ----
+        ticket_col = {
+            "s1":       "S1 played",
+            "s2":       "S2 played",
+            "strategy": "Strategy played",
+        }[strategy]
+        st.markdown("**Log**")
+        st.caption(f"{len(recs):,} records after filters, most recent first. "
+                   "Non-winning rows are shown too so you can see the full "
+                   "cadence.")
+
+        if not recs:
+            st.info("No records match those filters.")
+            return
+
+        PAGE_SIZE = 200
+        max_page = max(1, (len(recs) - 1) // PAGE_SIZE + 1)
+        page = st.number_input(
+            f"Page (1 – {max_page}, {PAGE_SIZE}/page)",
+            min_value=1, max_value=int(max_page), value=1, step=1,
+            key=f"purch_page_{strategy}",
+        )
+        start = (int(page) - 1) * PAGE_SIZE
+        end = start + PAGE_SIZE
+        page_rows = []
+        for r in recs[start:end]:
+            tk_str = ("-".join(str(x) for x in r["s1"])
+                      if r["game"] in ("Pick 3", "Daily 4")
+                      else " ".join(str(x) for x in sorted(r["s1"])))
+            draw_str = ("-".join(str(x) for x in r["draw_main"])
+                        if r["game"] in ("Pick 3", "Daily 4")
+                        else " ".join(str(x) for x in sorted(r["draw_main"])))
+            if r.get("user_bonus") is not None:
+                tk_str += f"  +B{r['user_bonus']}"
+            if r.get("draw_bonus") is not None:
+                draw_str += f"  +B{r['draw_bonus']}"
+            if isinstance(r["prize"], (int, float)) and r["prize"] > 0:
+                prize_str = f"${r['prize']:,.2f}"
+            elif r["prize"] is None:
+                prize_str = "(varies)"
+            else:
+                prize_str = "—"
+            page_rows.append({
+                "Date": r["date"] + (f" · {r['slot']}" if r.get("slot") else ""),
+                "Game": r["game"],
+                ticket_col: tk_str,
+                "Winning": draw_str,
+                "Tier": r["tier"],
+                "Prize": prize_str,
+                "Cost": f"${r['cost']:.2f}",
+            })
+        st.dataframe(pd.DataFrame(page_rows),
+                     width="stretch", hide_index=True)
+
+    # -------------------- Strategy comparison (same window, all 3) -------
+    with st.spinner("Loading walk-forward logs for all three strategies..."):
+        summaries = {}
+        for strat in STRATEGIES:
+            recs = _apply_filter(_load_strategy_records(strat))
+            summaries[strat] = summarize(recs)
+
+    st.markdown("### Head-to-head over the selected window")
+    cmp_cols = st.columns(3)
+    for col, strat in zip(cmp_cols, STRATEGIES):
+        s = summaries[strat]
+        with col:
+            st.markdown(f"**{STRATEGY_LABEL[strat]}**")
+            net = s["net"]
+            net_color = "#22c55e" if net >= 0 else "#ef4444"
+            st.markdown(
+                f"<div style='font-size:1.5rem;font-weight:700;"
+                f"color:{net_color};'>${net:,.2f}</div>"
+                f"<div style='opacity:0.7;font-size:0.85rem;'>net over "
+                f"{s['n_tickets']:,} tickets · won "
+                f"${s['total_winnings_fixed']:,.2f} on "
+                f"{s['n_fixed_wins']:,} fixed-prize wins</div>",
+                unsafe_allow_html=True,
+            )
+    st.caption(
+        "All three strategies use the same one-ticket-per-draw cadence and "
+        "the same filter selection. Under H₀ (fair lottery) they should "
+        "produce statistically indistinguishable long-run net returns."
+    )
 
     with st.expander("Play type per game (what this log simulates)"):
         rows = [
@@ -1202,53 +1288,12 @@ with tab_purchases:
             "those enabled would be higher."
         )
 
-    # -------------------- Log --------------------
-    st.markdown("### Log")
-    st.caption(f"{len(recs):,} records after filters, most recent first. "
-               "Non-winning rows are shown too so you can see the full "
-               "cadence.")
-
-    if not recs:
-        st.info("No records match those filters.")
-    else:
-        PAGE_SIZE = 200
-        max_page = max(1, (len(recs) - 1) // PAGE_SIZE + 1)
-        page = st.number_input(
-            f"Page (1 – {max_page}, {PAGE_SIZE}/page)",
-            min_value=1, max_value=int(max_page), value=1, step=1,
-            key="purch_page",
-        )
-        start = (int(page) - 1) * PAGE_SIZE
-        end = start + PAGE_SIZE
-        page_rows = []
-        for r in recs[start:end]:
-            s1_str = ("-".join(str(x) for x in r["s1"])
-                      if r["game"] in ("Pick 3", "Daily 4")
-                      else " ".join(str(x) for x in sorted(r["s1"])))
-            draw_str = ("-".join(str(x) for x in r["draw_main"])
-                        if r["game"] in ("Pick 3", "Daily 4")
-                        else " ".join(str(x) for x in sorted(r["draw_main"])))
-            if r.get("user_bonus") is not None:
-                s1_str += f"  +B{r['user_bonus']}"
-            if r.get("draw_bonus") is not None:
-                draw_str += f"  +B{r['draw_bonus']}"
-            if isinstance(r["prize"], (int, float)) and r["prize"] > 0:
-                prize_str = f"${r['prize']:,.2f}"
-            elif r["prize"] is None:
-                prize_str = "(varies)"
-            else:
-                prize_str = "—"
-            page_rows.append({
-                "Date": r["date"] + (f" · {r['slot']}" if r.get("slot") else ""),
-                "Game": r["game"],
-                "S1 played": s1_str,
-                "Winning": draw_str,
-                "Tier": r["tier"],
-                "Prize": prize_str,
-                "Cost": f"${r['cost']:.2f}",
-            })
-        st.dataframe(pd.DataFrame(page_rows),
-                     width="stretch", hide_index=True)
+    # -------------------- Per-strategy tabs (summary + log) --------------
+    st.markdown("### Per-strategy detail")
+    strat_tabs = st.tabs([STRATEGY_LABEL[s] for s in STRATEGIES])
+    for tab, strat in zip(strat_tabs, STRATEGIES):
+        with tab:
+            _render_strategy_view(strat)
 
 # ==================================================================
 # Audit — is this game statistically random?

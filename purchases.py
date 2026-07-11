@@ -1,20 +1,23 @@
-"""Walk-forward simulation of buying one ticket per draw using the app's
-S1 numbers as they would have appeared at each draw's date.
+"""Walk-forward simulation of buying one ticket per draw under three
+strategies. The "player" is assumed to have bought a ticket at each
+historical draw t (past a 50-draw burn-in) using one of:
 
-Semantics:
-  At each historical draw t (past a 50-draw burn-in), the "player" is
-  assumed to have bought a ticket with S1_t — where S1_t is the top-K
-  most-frequent balls computed from draws BEFORE t, matching what the
-  app's Overview card would have shown at that moment. For games with a
-  bonus pool (Powerball, Mega Millions, Texas Two Step) the ticket also
-  includes the walk-forward top-1 bonus ball at that same moment.
+  s1        — top-K most-frequent balls (or per-position most-frequent
+              digits) computed from draws BEFORE t. Matches what the
+              app's Overview card shows at that moment.
+  s2        — a fresh PRNG ticket, seeded deterministically per (game,
+              date, slot) so the historical log is stable across runs.
+  strategy  — collision-avoidance ticket blending S1-style prediction
+              with anti-popular-number filtering; for k-of-N games this
+              uses `anti_collision_sequence` with the prior-draw history.
 
-Cost model:
-  One base ticket per draw at the game's base wager. Add-ons (Extra!,
-  Power Play, Megaplier, Fireball) are NOT modelled — the UI must
-  disclose this.
+Bonus ball follows the main strategy: s1 → most-frequent bonus so far,
+s2 → deterministic PRNG bonus, strategy → `anti_collision_bonus`.
 
-Play types (explicit):
+Cost model: one base ticket per draw at the game's base wager. Add-ons
+(Extra!, Power Play, Megaplier, Fireball) are NOT modelled.
+
+Play types:
   - Lotto Texas       6-of-54 main only, $1
   - Mega Millions     5-of-70 + Mega Ball, $5
   - Powerball         5-of-69 + Powerball,   $2
@@ -24,12 +27,8 @@ Play types (explicit):
   - Pick 3            $1 Straight, exact-order match
   - Daily 4           $1 Straight, exact-order match
 
-Prize amounts come from checker.check_ticket; jackpot / pari-mutuel tiers
-resolve to None (the log shows "Jackpot / varies" rather than a made-up
-number).
-
-Cached per game to `data/purchase_cache/<game>_<sig>.json` keyed on the
-CSV mtime signature so cron refreshes invalidate cleanly.
+Cached per (game, strategy) to `data/purchase_cache/<game>_<strategy>_<sig>.json`
+keyed on the CSV mtime signature so cron refreshes invalidate cleanly.
 """
 from __future__ import annotations
 import hashlib
@@ -38,13 +37,30 @@ import os
 from collections import Counter
 from datetime import date
 from typing import Dict, List, Optional
+import numpy as np
 from games import GAMES, GameConfig
 from loader import load_draws_full
-from strategies import s1_from_counter, s1_from_position_counters
+from strategies import (
+    s1_from_counter, s1_from_position_counters, s2_prng,
+    anti_collision_sequence, anti_collision_bonus,
+    digit_anti_collision,
+)
 from checker import check_ticket
 
 CACHE_DIR = "data/purchase_cache"
 BURN_IN = 50
+
+STRATEGIES = ("s1", "s2", "strategy")
+STRATEGY_LABEL = {
+    "s1":       "S1 (most-frequent)",
+    "s2":       "S2 (random)",
+    "strategy": "🎯 Strategy (anti-collision)",
+}
+STRATEGY_TAGLINE = {
+    "s1":       "Top-K historically most-frequent balls, walk-forward.",
+    "s2":       "Fresh PRNG ticket per draw, deterministic seed per (game, date, slot).",
+    "strategy": "Collision-avoidance blend of S1 prediction + anti-popular-number filter.",
+}
 
 # The formal "experiment start" — the date the Purchases tab went live
 # and from which the going-forward simulated tracking begins. Filter the
@@ -52,9 +68,6 @@ BURN_IN = 50
 # view. Everything before this cutoff is the "all-time hypothetical" view.
 EXPERIMENT_START = date(2026, 7, 10)
 
-# Per-game display label + numeric cost per single ticket. Numeric cost
-# overrides `ticket_cost_low` for digit games where the base wager we
-# simulate is $1 (Straight), not the $0.50 game minimum.
 PLAY_TYPE_LABEL: Dict[str, str] = {
     "Lotto Texas":    "6-of-54 (main only, no Extra!)",
     "Mega Millions":  "5-of-70 + Mega Ball",
@@ -83,20 +96,32 @@ def _sig(game: GameConfig) -> str:
     return hashlib.sha1(str(parts).encode()).hexdigest()[:12]
 
 
-def _cache_path(game_name: str) -> str:
+def _cache_path(game_name: str, strategy: str) -> str:
     safe = game_name.replace(" ", "_")
-    return os.path.join(CACHE_DIR, f"{safe}_{_sig(GAMES[game_name])}.json")
+    return os.path.join(CACHE_DIR,
+                        f"{safe}_{strategy}_{_sig(GAMES[game_name])}.json")
+
+
+def _draw_seed(game_name: str, dt: date, slot: Optional[str]) -> int:
+    """Stable per-draw seed for S2, so the same historical draw always
+    yields the same S2 ticket."""
+    key = f"{game_name}|{dt.isoformat()}|{slot or ''}"
+    return int(hashlib.sha1(key.encode()).hexdigest()[:8], 16)
+
+
+def _s2_bonus(game: GameConfig, seed: int) -> int:
+    rng = np.random.default_rng(seed ^ 0xA5A5A5A5)
+    return int(rng.integers(1, game.bonus_n + 1))
 
 
 def _simulate_kn(game: GameConfig, era_full: List[dict],
-                 bonus_by_date: Optional[Dict] = None) -> List[dict]:
-    """Walk-forward S1 for a k-of-N game. bonus_by_date maps
-    (date, slot) -> bonus_int for the game's era (None for games without
-    a bonus pool). Returns one record per scored draw."""
+                 strategy: str) -> List[dict]:
+    """Walk-forward k-of-N simulation for one strategy. Returns one record
+    per scored draw."""
     K, N = game.k_main, game.n_main
     counter: Counter = Counter()
-    # Track bonus counts for walk-forward top-1 bonus.
     bonus_counter: Counter = Counter() if game.bonus_n else None
+    prior_draws: List = []            # for strategy (anti-collision) picks
     log: List[dict] = []
 
     for t, row in enumerate(era_full):
@@ -106,16 +131,33 @@ def _simulate_kn(game: GameConfig, era_full: List[dict],
         draw_bonus = row["bonus"]
 
         if t >= BURN_IN:
-            s1 = s1_from_counter(counter, K, N)
-            picked_bonus = None
-            if game.bonus_n and len(bonus_counter) > 0:
-                ordered = sorted(range(1, game.bonus_n + 1),
-                                 key=lambda b: (-bonus_counter.get(b, 0), b))
-                picked_bonus = ordered[0]
+            # ---- Pick main ticket per-strategy ----
+            if strategy == "s1":
+                ticket = s1_from_counter(counter, K, N)
+            elif strategy == "s2":
+                seed = _draw_seed(game.name, dt, slot)
+                ticket = s2_prng(game, seed)
+            elif strategy == "strategy":
+                ticket = anti_collision_sequence(game, draws=prior_draws)
+            else:
+                raise ValueError(f"unknown strategy {strategy!r}")
+
+            # ---- Pick bonus ball per-strategy ----
+            picked_bonus: Optional[int] = None
+            if game.bonus_n:
+                if strategy == "s1":
+                    if len(bonus_counter) > 0:
+                        ordered = sorted(range(1, game.bonus_n + 1),
+                                         key=lambda b: (-bonus_counter.get(b, 0), b))
+                        picked_bonus = ordered[0]
+                elif strategy == "s2":
+                    picked_bonus = _s2_bonus(game, _draw_seed(game.name, dt, slot))
+                elif strategy == "strategy":
+                    picked_bonus = anti_collision_bonus(game)
 
             result = check_ticket(
                 game.name,
-                user_main=set(s1),
+                user_main=set(ticket),
                 draw_main=draw_main,
                 user_bonus=picked_bonus,
                 draw_bonus=draw_bonus,
@@ -123,7 +165,7 @@ def _simulate_kn(game: GameConfig, era_full: List[dict],
             log.append({
                 "date": dt.isoformat(),
                 "slot": slot,
-                "s1": list(s1),
+                "s1": list(ticket),          # kept as "s1" key for UI compat
                 "user_bonus": picked_bonus,
                 "draw_main": list(draw_main),
                 "draw_bonus": draw_bonus,
@@ -137,13 +179,14 @@ def _simulate_kn(game: GameConfig, era_full: List[dict],
         counter.update(draw_main)
         if game.bonus_n and draw_bonus is not None:
             bonus_counter[draw_bonus] += 1
+        prior_draws.append((dt, draw_main))
 
     return log
 
 
-def _simulate_digit(game: GameConfig, era_full: List[dict]) -> List[dict]:
-    """Walk-forward per-position S1 for a digit game (Pick 3 / Daily 4).
-    Play type: $1 Straight."""
+def _simulate_digit(game: GameConfig, era_full: List[dict],
+                    strategy: str) -> List[dict]:
+    """Walk-forward digit-game simulation. Play type: $1 Straight."""
     K, N = game.k_main, game.n_main
     per_pos = [Counter() for _ in range(K)]
     log: List[dict] = []
@@ -154,9 +197,18 @@ def _simulate_digit(game: GameConfig, era_full: List[dict]) -> List[dict]:
         draw_main = row["main"]
 
         if t >= BURN_IN:
-            s1 = s1_from_position_counters(per_pos, K, N)
+            if strategy == "s1":
+                ticket = s1_from_position_counters(per_pos, K, N)
+            elif strategy == "s2":
+                seed = _draw_seed(game.name, dt, slot)
+                ticket = s2_prng(game, seed)
+            elif strategy == "strategy":
+                ticket = digit_anti_collision(per_pos, K, N)
+            else:
+                raise ValueError(f"unknown strategy {strategy!r}")
+
             result = check_ticket(
-                game.name, user_main=tuple(s1),
+                game.name, user_main=tuple(ticket),
                 draw_main=draw_main,
                 play_type="Straight",
                 dollar_play=1.0,
@@ -164,11 +216,11 @@ def _simulate_digit(game: GameConfig, era_full: List[dict]) -> List[dict]:
             log.append({
                 "date": dt.isoformat(),
                 "slot": slot,
-                "s1": list(s1),
+                "s1": list(ticket),          # kept as "s1" key for UI compat
                 "user_bonus": None,
                 "draw_main": list(draw_main),
                 "draw_bonus": None,
-                "matches": None,  # digit games use exact/positional
+                "matches": None,
                 "bonus_match": False,
                 "tier": result["tier"],
                 "prize": result["prize"],
@@ -182,9 +234,13 @@ def _simulate_digit(game: GameConfig, era_full: List[dict]) -> List[dict]:
     return log
 
 
-def simulate_game(game_name: str) -> List[dict]:
-    """Return the walk-forward purchase log for one game. Disk-cached."""
-    cache_p = _cache_path(game_name)
+def simulate_game(game_name: str, strategy: str = "s1") -> List[dict]:
+    """Return the walk-forward purchase log for one game under one strategy.
+    Disk-cached per (game, strategy). Strategy must be one of STRATEGIES."""
+    if strategy not in STRATEGIES:
+        raise ValueError(f"strategy must be one of {STRATEGIES}, got {strategy!r}")
+
+    cache_p = _cache_path(game_name, strategy)
     if os.path.exists(cache_p):
         try:
             with open(cache_p) as f:
@@ -196,9 +252,9 @@ def simulate_game(game_name: str) -> List[dict]:
     era_full = [r for r in load_draws_full(game) if r["date"] >= game.era_start]
 
     if game.game_type == "digit":
-        log = _simulate_digit(game, era_full)
+        log = _simulate_digit(game, era_full, strategy)
     else:
-        log = _simulate_kn(game, era_full)
+        log = _simulate_kn(game, era_full, strategy)
 
     os.makedirs(CACHE_DIR, exist_ok=True)
     with open(cache_p, "w") as f:
@@ -210,7 +266,6 @@ def summarize(records: List[dict]) -> Dict:
     """Roll up a filtered list of purchase records into summary metrics."""
     n = len(records)
     total_spent = sum(r["cost"] for r in records)
-    # For jackpot/pari-mutuel tiers, prize is None — count separately
     fixed_wins = [r for r in records
                   if isinstance(r["prize"], (int, float)) and r["prize"] > 0]
     variable_wins = [r for r in records if r["prize"] is None]
@@ -221,7 +276,7 @@ def summarize(records: List[dict]) -> Dict:
         "total_spent": total_spent,
         "total_winnings_fixed": total_winnings,
         "n_fixed_wins": len(fixed_wins),
-        "n_variable_wins": len(variable_wins),   # jackpot/pari-mutuel hits
+        "n_variable_wins": len(variable_wins),
         "net": total_winnings - total_spent,
         "hit_rate": (len(fixed_wins) + len(variable_wins)) / n if n else 0.0,
         "best_win": best_win,

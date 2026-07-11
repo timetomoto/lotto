@@ -135,6 +135,26 @@ def anti_collision_sequence(game: GameConfig, draws=None) -> tuple:
         picks.append(b)
     return tuple(sorted(picks))
 
+# Documented digit-game player biases: 7 most-picked, 3 second, 5 popular,
+# 1/2 birthday-days. 0/8/9 relatively unpopular. Applied per-position for
+# digit games as the collision-avoidance variant. Higher score = more
+# commonly picked (bad for prize-splitting).
+DIGIT_POPULARITY = {7: 1.5, 3: 1.2, 5: 1.0, 1: 0.8, 2: 0.8,
+                    4: 0.4, 6: 0.4, 9: 0.2, 8: 0.1, 0: 0.0}
+
+def digit_anti_collision(counters: Sequence[Counter], K: int, N: int
+                         ) -> Tuple[int, ...]:
+    """Per-position pick minimizing (player popularity, -historical freq).
+    For Pick 3 / Daily 4. Mirrors the k-of-N anti_collision_sequence blend
+    of avoidance + S1-style prediction."""
+    return tuple(
+        min(range(N),
+            key=lambda d: (DIGIT_POPULARITY.get(d, 0.5),
+                           -counters[i].get(d, 0),
+                           -d))
+        for i in range(K)
+    )
+
 def anti_collision_bonus(game: GameConfig) -> "int | None":
     """Anti-collision pick for the bonus pool.
     Within a pool that's usually fully inside the birthday range (1-25,
