@@ -1155,10 +1155,13 @@ with tab_purchases:
     )
 
     # -------------------- Shared filters (apply to all three tabs) --------
+    # Default to a single game (not "All games") so cold-cache first visits
+    # only rebuild 3 walk-forward logs (one per strategy) instead of 24.
+    # Users can opt into "All games" if they want the cross-game aggregate.
     f1, f2 = st.columns([2, 1])
     with f1:
         game_choice = st.selectbox(
-            "Game", ["All games"] + list(GAMES.keys()),
+            "Game", list(GAMES.keys()) + ["All games"],
             key="purchases_game",
         )
     with f2:
@@ -1305,35 +1308,41 @@ with tab_purchases:
         st.dataframe(pd.DataFrame(page_rows),
                      width="stretch", hide_index=True)
 
-    # -------------------- Strategy comparison (same window, all 3) -------
-    with st.spinner("Loading walk-forward logs for all three strategies..."):
-        summaries = {}
-        for strat in STRATEGIES:
-            recs = _apply_filter(_load_strategy_records(strat))
-            summaries[strat] = summarize(recs)
-
-    st.markdown("### Head-to-head over the selected window")
-    cmp_cols = st.columns(3)
-    for col, strat in zip(cmp_cols, STRATEGIES):
-        s = summaries[strat]
-        with col:
-            st.markdown(f"**{STRATEGY_LABEL[strat]}**")
-            net = s["net"]
-            net_color = "#22c55e" if net >= 0 else "#ef4444"
-            st.markdown(
-                f"<div style='font-size:1.5rem;font-weight:700;"
-                f"color:{net_color};'>${net:,.2f}</div>"
-                f"<div style='opacity:0.7;font-size:0.85rem;'>net over "
-                f"{s['n_tickets']:,} tickets · won "
-                f"${s['total_winnings_fixed']:,.2f} on "
-                f"{s['n_fixed_wins']:,} fixed-prize wins</div>",
-                unsafe_allow_html=True,
-            )
-    st.caption(
-        "All three strategies use the same one-ticket-per-draw cadence and "
-        "the same filter selection. Under H₀ (fair lottery) they should "
-        "produce statistically indistinguishable long-run net returns."
-    )
+    # -------------------- Strategy comparison (opt-in) -------
+    # Collapsed by default so we don't force a 3-strategy walk-forward
+    # rebuild on every session. On first visit after a fresh deploy the
+    # per-strategy tabs each load one strategy on-demand; expanding this
+    # section triggers the head-to-head compute only when a user asks.
+    with st.expander("Head-to-head net over the selected window "
+                     "(all three strategies)"):
+        with st.spinner("Loading walk-forward logs for all three "
+                        "strategies..."):
+            summaries = {}
+            for strat in STRATEGIES:
+                recs = _apply_filter(_load_strategy_records(strat))
+                summaries[strat] = summarize(recs)
+        cmp_cols = st.columns(3)
+        for col, strat in zip(cmp_cols, STRATEGIES):
+            s = summaries[strat]
+            with col:
+                st.markdown(f"**{STRATEGY_LABEL[strat]}**")
+                net = s["net"]
+                net_color = "#22c55e" if net >= 0 else "#ef4444"
+                st.markdown(
+                    f"<div style='font-size:1.5rem;font-weight:700;"
+                    f"color:{net_color};'>${net:,.2f}</div>"
+                    f"<div style='opacity:0.7;font-size:0.85rem;'>net over "
+                    f"{s['n_tickets']:,} tickets · won "
+                    f"${s['total_winnings_fixed']:,.2f} on "
+                    f"{s['n_fixed_wins']:,} fixed-prize wins</div>",
+                    unsafe_allow_html=True,
+                )
+        st.caption(
+            "All three strategies use the same one-ticket-per-draw cadence "
+            "and the same filter selection. Under H₀ (fair lottery) they "
+            "should produce statistically indistinguishable long-run net "
+            "returns."
+        )
 
     with st.expander("Play type per game (what this log simulates)"):
         rows = [

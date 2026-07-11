@@ -30,6 +30,7 @@ from mc_null import (
     mc_walk_forward_null, mc_serial_dependence_null,
     mc_gap_test_null, mc_pair_cooccurrence_null, mc_cusum_drift_null,
 )
+from purchases import simulate_game as _purchase_simulate, STRATEGIES
 
 
 def _warm_one_game(name: str) -> dict:
@@ -84,6 +85,14 @@ def _warm_one_game(name: str) -> dict:
         do("serial MC null (digit)",
            lambda: mc_serial_dependence_null(g, D=D, n_sim=100, seed=42,
                                              lags=10))
+
+    # Purchase-log walk-forward simulations — one per (game, strategy).
+    # These are the caches the Purchases tab reads; when they're missing,
+    # first-visit Cloud page load blocks for tens of seconds while it
+    # rebuilds them 3× per game.
+    for strat in STRATEGIES:
+        do(f"purchase log ({strat})",
+           lambda s=strat: _purchase_simulate(name, strategy=s))
 
     return {"game": name, "steps": steps, "D": D}
 
