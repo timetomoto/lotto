@@ -1146,14 +1146,12 @@ with tab_purchases:
 # ==================================================================
 
 with tab_audit:
-    st.subheader("Is this game's history statistically random?")
+    st.subheader("Is this game fair?")
     st.write(
-        "The audit runs multiple tests against the game's history. Each "
-        "test targets a different way a lottery could be *un*fair "
-        "(unequal frequencies, streaks, ball pairs, drift, etc.). The "
-        "**family-wise verdict** below combines all of them and applies "
-        "Holm correction — the honest bottom line after accounting for "
-        "the number of tests run."
+        "Six or seven checks — one per way a lottery could quietly be *un*fair "
+        "(unequal frequencies, streaks, ball pairs, drift, bonus-ball "
+        "irregularities, ordering). Each check is a plain question. "
+        "Full math is available under **Methodology** at the bottom."
     )
 
     audit_game = st.selectbox(
@@ -1238,53 +1236,92 @@ with tab_audit:
     raw_ps = [p for _, p in family]
     holm_ps = holm_correction(raw_ps)
     min_holm = min(holm_ps) if holm_ps else 1.0
+    passes_overall = min_holm >= 0.05
 
-    passes = min_holm >= 0.05
-    verdict_icon = "✅" if passes else "⚠️"
-    verdict_head = ("Passes the family-wise randomness audit" if passes
-                    else "Family-wise audit flags a deviation")
-    verdict_body = (
-        f"Across **{len(raw_ps)} tests** (frequency, serial dependence, "
-        f"gap, pair co-occurrence, drift, and where applicable bonus pool "
-        f"or per-position digits), the smallest Holm-adjusted p-value is "
-        f"**{min_holm:.3f}**. "
-        + ("Every family-wise-corrected test is consistent with a fair "
-           "random process." if passes else
-           f"After correcting for the {len(raw_ps)} tests run, at least "
-           f"one test still shows deviation worth investigating.")
-    )
-    box = st.success if passes else st.error
-    box(f"### {verdict_icon} {verdict_head}\n\n{verdict_body}")
-
-    with st.expander("Family-wise summary — every test, raw and Holm-adjusted"):
-        st.caption(
-            "Raw p is the MC-empirical (or analytic where valid) upper-tail "
-            "probability. Holm-adjusted p controls family-wise error at "
-            "any α ≥ max(adjusted). Adjusted p ≥ 0.05 → the family passes "
-            "at α = 0.05."
+    # ------------------------------------------------------------------
+    # Group individual tests into plain-language categories. Each category
+    # passes iff ALL its constituent Holm-adjusted p-values are >= 0.05.
+    # ------------------------------------------------------------------
+    def _cat_pass(prefixes):
+        return all(
+            p_holm >= 0.05
+            for (lbl, _), p_holm in zip(family, holm_ps)
+            if any(lbl.startswith(pref) for pref in prefixes)
         )
-        df_family = pd.DataFrame({
-            "Test": labels,
-            "Raw p": [round(p, 4) for p in raw_ps],
-            "Holm-adjusted p": [round(p, 4) for p in holm_ps],
-            "Family-wise verdict": ["passes" if p >= 0.05 else "flag"
-                                    for p in holm_ps],
-        })
-        st.dataframe(df_family, width="stretch", hide_index=True)
+    def _cat_has(prefixes):
+        return any(
+            any(lbl.startswith(pref) for pref in prefixes)
+            for (lbl, _) in family
+        )
 
-    st.markdown("#### How often each number has been drawn")
-    st.caption(
-        "Each bar is one number. The dashed line is the count you'd expect "
-        "under a fair random process. Bars close to the line are normal; a "
-        "sustained deviation across many bars would be evidence of a "
-        "non-random process."
+    if game.game_type == "kn":
+        categories = [
+            ("Is every number drawn equally often?",       ("Frequency",)),
+            ("Are there any hot / cold streaks?",          ("Gap",)),
+            ("Do draws influence each other over time?",   ("Serial",)),
+            ("Are certain ball pairs drawn together too often?", ("Pair",)),
+            ("Is the machine drifting over time?",         ("Drift",)),
+        ]
+        if game.bonus_n:
+            categories.append(
+                (f"Is the {game.bonus_label} fair too?",    ("Bonus",)))
+        categories.append(
+            ("Does the draw order look random?",            ("Position",)))
+    else:  # digit
+        categories = [
+            ("Is every digit drawn equally often?",         ("Frequency",)),
+            ("Do draws influence each other over time?",    ("Serial",)),
+            ("Does each digit position look uniform?",      ("Position",)),
+        ]
+    categories = [(q, pref, _cat_pass(pref)) for (q, pref) in categories
+                  if _cat_has(pref)]
+
+    verdict_head = (f"{audit_game} appears to be a fair game"
+                    if passes_overall
+                    else f"{audit_game} shows a possible pattern worth "
+                         "investigating")
+    passed_ct = sum(1 for _, _, ok in categories)
+    total_ct  = len(categories)
+    verdict_body = (
+        f"**{passed_ct} of {total_ct} fairness checks passed.**  "
+        f"Based on {len(era_draws):,} drawings since "
+        f"{game.era_start.strftime('%B %Y')}. "
+        + ("Everything below is what we checked and how."
+           if passes_overall else
+           "The check(s) flagged below deserve a closer look.")
+    )
+    (st.success if passes_overall else st.error)(
+        f"### {'✓' if passes_overall else '⚠️'} {verdict_head}\n\n"
+        f"{verdict_body}"
+    )
+
+    # ------------------------------------------------------------------
+    # Executive summary — one bullet per plain-language check
+    # ------------------------------------------------------------------
+    with st.container(border=True):
+        st.markdown("**What we're checking for**")
+        for q, _, ok in categories:
+            icon = "✓" if ok else "⚠️"
+            color = "#22c55e" if ok else "#facc15"
+            st.markdown(
+                f"<div style='margin:0.2rem 0;'>"
+                f"<span style='color:{color};font-weight:bold;'>{icon}</span> "
+                f"{q}</div>",
+                unsafe_allow_html=True,
+            )
+
+    st.divider()
+    st.markdown(
+        "### " + ("Is every number drawn equally often?"
+                  if game.game_type == "kn"
+                  else "Is every digit drawn equally often?")
     )
     obs = chi["observed"]
     exp = float(chi["expected"][0])
-    labels = list(range(1, game.n_main + 1)) if game.game_type == "kn" \
-             else list(range(game.n_main))
+    x_labels = list(range(1, game.n_main + 1)) if game.game_type == "kn" \
+               else list(range(game.n_main))
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=labels, y=obs, name="Observed"))
+    fig.add_trace(go.Bar(x=x_labels, y=obs, name="Observed"))
     fig.add_hline(y=exp, line_dash="dash",
                   annotation_text=f"Expected ≈ {exp:.0f}",
                   annotation_position="top left")
@@ -1293,18 +1330,63 @@ with tab_audit:
                       margin=dict(l=10, r=10, t=10, b=10),
                       showlegend=False)
     st.plotly_chart(fig, width="stretch")
+    freq_ok = _cat_pass(("Frequency",))
+    st.markdown(
+        f"**{'✓' if freq_ok else '⚠️'} "
+        f"{'Yes — no favorites.' if freq_ok else 'One or more numbers appear more or less often than expected.'}** "
+        + ("The observed spread is exactly what we'd expect from random "
+           "draws. If a specific number were sticking way above the line "
+           "while others sat way below, that would suggest a biased machine."
+           if freq_ok else
+           "See the details below for which numbers deviate.")
+    )
+    with st.expander("How we tested it"):
+        st.markdown(
+            f"- **What the test looks for:** the count of each ball / digit "
+            f"across all draws, compared to the count you'd expect from a "
+            f"uniform random process (D · K / N).\n"
+            f"- **Statistic:** Pearson χ² = Σᵢ (Oᵢ − E)² / E, where Oᵢ is "
+            f"the observed count of ball i and E = D · K / N.\n"
+            f"- **Value:** χ² = {chi['chi2']:.2f}\n"
+        )
+        if game.game_type == "kn":
+            null_mean = chi.get("null_mean")
+            expected_mean = chi.get("null_expected_mean")
+            n_sim = chi.get("n_sim")
+            st.markdown(
+                f"- **Calibration:** k-of-N draws have negatively correlated "
+                f"balls within one draw (they must be distinct), so the "
+                f"textbook χ²(df=N−1) reference is *miscalibrated* — the "
+                f"statistic's true mean is **N−K = {expected_mean:.0f}**, "
+                f"not N−1 = {chi['df']}. We use a Monte Carlo empirical "
+                f"null (n_sim = {n_sim:,} simulated fair histories); the "
+                f"empirical mean lands at {null_mean:.2f}, matching theory.\n"
+                f"- **p-value (MC empirical):** {chi['p']:.4f}\n"
+                f"- **Analytic χ²(df=N−1) p-value** for reference "
+                f"(deprecated, conservative): {chi['p_analytic']:.4f}"
+            )
+        else:
+            st.markdown(
+                f"- **Degrees of freedom:** {chi['df']}\n"
+                f"- **Method:** analytic χ²(df=N−1). Digit positions are "
+                f"genuinely independent under H₀ so the textbook reference "
+                f"is exact — no MC correction needed.\n"
+                f"- **p-value:** {chi['p']:.4f}"
+            )
+        st.caption(
+            "p ≥ 0.05 in isolation means the individual test doesn't reject "
+            "H₀. The verdict at the top uses Holm-corrected p to protect "
+            "against false positives across multiple tests."
+        )
 
-    # -----------------------------------------------------------------
-    # Serial-dependence audit (B1) — tests the "independence" half of IID
-    # -----------------------------------------------------------------
     st.divider()
-    st.subheader("Serial-independence audit")
+    st.markdown("### Do draws influence each other over time?")
     st.caption(
-        "The chi-square above tests only whether balls appear with equal "
-        "*frequency*. This section tests the other half of \"random\": "
-        "whether draws are independent of each other over time. A biased "
-        "machine that produces streaks would pass the frequency test but "
-        "fail here."
+        "Even a machine that draws every ball equally often could still be "
+        "biased in a subtler way — if a ball tended to *repeat* across "
+        "several draws in a row, or to alternate in a pattern. This check "
+        "looks at each ball's appear/not-appear timeline for any pattern "
+        "over time."
     )
 
     with st.spinner("Computing serial-dependence null (cached after first run)..."):
@@ -1315,82 +1397,52 @@ with tab_audit:
     p_max_lb = float(np.mean(s_null["max_ljung_box"] >= obs_lb["max_stat"]))
     p_prop_lb = float(np.mean(s_null["prop_lb_below_05"] >= obs_lb["prop_below_05"]))
 
-    sm1, sm2, sm3 = st.columns(3)
-    sm1.metric(
-        "Max Ljung-Box (any ball)",
-        f"{obs_lb['max_stat']:.1f}",
-        delta=f"MC p = {p_max_lb:.3f}",
-        delta_color="off",
-        help="Largest lag-10 autocorrelation statistic across all ball "
-             "indicator series. MC-calibrated because per-ball series are "
-             "not independent under H₀."
-    )
-    sm2.metric(
-        "Balls flagged at α=0.05",
-        f"{obs_lb['prop_below_05']*100:.1f}%",
-        delta=f"MC p = {p_prop_lb:.3f}",
-        delta_color="off",
-        help=f"Under H₀ the MC-calibrated expectation is "
-             f"~{s_null['prop_lb_below_05'].mean()*100:.1f}%."
-    )
-    sm3.metric(
-        "Runs test on draw sums",
-        f"p = {obs_runs['p']:.3f}",
-        delta="passes" if obs_runs['p'] >= 0.05 else "flag",
-        delta_color="off",
-        help="Wald–Wolfowitz runs test on the sequence of draw sums vs. "
-             "their median. Coarser than LB but a familiar single p-value."
-    )
-
-    verdict_pass = (p_max_lb >= 0.05 and p_prop_lb >= 0.05 and
-                    obs_runs['p'] >= 0.05)
-    if verdict_pass:
-        st.success(
-            "✅ **No serial dependence detected.** All three summaries land "
-            "inside the MC-calibrated null band — the draws are consistent "
-            "with independent draws over time."
+    serial_ok = _cat_pass(("Serial",))
+    if serial_ok:
+        st.markdown(
+            "**✓ Yes — draws look independent.** No ball shows a "
+            "significant tendency to cluster or repeat across nearby "
+            "drawings."
         )
     else:
-        st.warning(
-            "⚠️ At least one serial-independence signal exceeds the "
-            "MC-calibrated null. Investigate."
-        )
-
-    with st.expander("Serial-dependence details"):
         st.markdown(
-            f"- **Ljung-Box (primary):** each of {obs_lb['n_series']} ball / "
-            f"(position, digit) indicator series is tested for lag-10 "
-            f"autocorrelation. We aggregate two ways:\n"
-            f"  - **Max LB statistic** (single-worst ball): observed "
-            f"{obs_lb['max_stat']:.2f}, MC null mean "
-            f"{s_null['max_ljung_box'].mean():.2f}, "
-            f"95th percentile {np.percentile(s_null['max_ljung_box'], 95):.2f}, "
-            f"empirical p = {p_max_lb:.4f}.\n"
-            f"  - **Proportion flagged at α=0.05:** observed "
-            f"{obs_lb['prop_below_05']*100:.1f}%, MC null mean "
-            f"{s_null['prop_lb_below_05'].mean()*100:.1f}% "
-            f"(≈ 5% under strict independence, drifts up slightly from "
-            f"within-draw negative correlation — the MC captures that).\n"
-            f"- **Runs test (secondary):** collapses each K-ball draw to a "
-            f"single sum and applies the Wald–Wolfowitz runs test vs. the "
-            f"median. Coarse — it throws away most of the structure LB catches — "
-            f"but included as a familiar sanity check. Observed p = "
-            f"{obs_runs['p']:.4f} (null mean ≈ 0.5 under H₀; MC mean "
-            f"{s_null['runs_test_p'].mean():.3f})."
+            "**⚠️ Possible pattern over time.** At least one ball's "
+            "sequence deviates from what independent draws would produce."
         )
 
-    # -----------------------------------------------------------------
-    # Gap-test audit (B3) — kn games only. Per-ball gap distribution
-    # against Geometric(K/N).
-    # -----------------------------------------------------------------
+    with st.expander("How we tested it"):
+        st.markdown(
+            f"- **Primary test:** Ljung–Box on each ball's indicator series "
+            f"(1 if ball drawn on that date, else 0), lag = 10. Aggregated "
+            f"two ways across the {obs_lb['n_series']} series:\n"
+            f"  - **Max LB statistic** (worst ball): {obs_lb['max_stat']:.2f} "
+            f"— MC null mean {s_null['max_ljung_box'].mean():.2f}, "
+            f"95th percentile "
+            f"{np.percentile(s_null['max_ljung_box'], 95):.2f}. "
+            f"Empirical p = {p_max_lb:.4f}.\n"
+            f"  - **% of balls with LB p < 0.05**: "
+            f"{obs_lb['prop_below_05']*100:.1f}%. MC null mean "
+            f"{s_null['prop_lb_below_05'].mean()*100:.1f}% (drifts above "
+            f"5% because per-ball series aren't truly independent — "
+            f"within-draw negative correlation. The MC handles that).\n"
+            f"- **Secondary test:** Wald–Wolfowitz runs on the sequence of "
+            f"draw sums vs. median. Coarser (collapses each K-ball draw "
+            f"to one number) but a familiar single p-value. "
+            f"p = {obs_runs['p']:.4f} (null mean ≈ 0.5).\n"
+            f"- **Calibration:** MC null runs the exact same Ljung–Box "
+            f"aggregation on 100 simulated fair histories at the same D, "
+            f"K, N — accounting for the within-draw structure."
+        )
+
     if game.game_type == "kn":
         st.divider()
-        st.subheader("Gap-test audit")
+        st.markdown("### Are there any real hot / cold streaks?")
         st.caption(
-            "For each ball, the gap (number of draws) between consecutive "
-            "appearances should follow Geometric(K/N) under H₀. Catches "
-            "clumping — a ball that goes cold then hot — even when its "
-            "total count looks normal."
+            "\"Hot number\" claims usually mean *clumping*: a ball goes cold "
+            "for months, then hot for a week, then cold again — even if its "
+            "total count is exactly average. This check looks at the gaps "
+            "between each ball's appearances and compares them to the "
+            "distribution you'd expect if every draw were independent."
         )
         with st.spinner("Computing gap-test null (cached after first run)..."):
             obs_g = gap_test_aggregate(era_draws, game)
@@ -1400,41 +1452,48 @@ with tab_audit:
         p_g_prop = float(np.mean(
             g_null["prop_below_05"] >= obs_g["prop_below_05"]))
 
-        gm1, gm2 = st.columns(2)
-        gm1.metric(
-            "Worst-fitting ball (χ²)",
-            f"{obs_g['max_stat']:.1f}",
-            delta=f"MC p = {p_g_max:.3f}",
-            delta_color="off",
-            help="Largest gap-test χ² across all balls."
-        )
-        gm2.metric(
-            "Balls flagged at α=0.05",
-            f"{obs_g['prop_below_05']*100:.1f}%",
-            delta=f"MC p = {p_g_prop:.3f}",
-            delta_color="off",
-            help=f"Under H₀, MC-calibrated expectation "
-                 f"~{g_null['prop_below_05'].mean()*100:.1f}%."
-        )
-        gap_pass = (p_g_max >= 0.05 and p_g_prop >= 0.05)
-        if gap_pass:
-            st.success("✅ **Gap distribution consistent with H₀** — no "
-                       "detectable clumping in any single ball.")
+        gap_ok = _cat_pass(("Gap",))
+        if gap_ok:
+            st.markdown(
+                "**✓ No — the gap distribution is boring.** Every ball's "
+                "wait-between-appearances follows the shape you'd expect "
+                "under independent draws. \"Hot\" and \"cold\" streaks people "
+                "notice are pure sampling noise."
+            )
         else:
-            st.warning("⚠️ Gap distribution shows unusual clumping for at "
-                       "least one ball.")
+            st.markdown("**⚠️ Unusual clumping** for at least one ball.")
 
-    # -----------------------------------------------------------------
-    # Pairwise co-occurrence audit (B2) — kn games only.
-    # -----------------------------------------------------------------
+        with st.expander("How we tested it"):
+            st.markdown(
+                f"- **Distribution under H₀:** for a ball with per-draw "
+                f"appearance probability p = K/N = {game.k_main / game.n_main:.4f}, "
+                f"gaps between successive appearances follow "
+                f"Geometric(p).\n"
+                f"- **Per-ball statistic:** χ² of observed gap-length "
+                f"histogram against the expected geometric.\n"
+                f"- **Aggregated across all {game.n_main} balls:**\n"
+                f"  - **Max χ² (worst-fitting ball):** {obs_g['max_stat']:.1f}. "
+                f"MC null 95th percentile "
+                f"{np.percentile(g_null['max_chi2'], 95):.1f}. "
+                f"Empirical p = {p_g_max:.4f}.\n"
+                f"  - **% of balls flagged at α=0.05:** "
+                f"{obs_g['prop_below_05']*100:.1f}%. MC null mean "
+                f"{g_null['prop_below_05'].mean()*100:.1f}%. "
+                f"Empirical p = {p_g_prop:.4f}.\n"
+                f"- **Why MC:** with {game.n_main} balls tested we can't "
+                f"trust naive per-ball p-values on their own — MC "
+                f"calibrates the *aggregate* against the multiple-testing "
+                f"structure."
+            )
+
     if game.game_type == "kn":
         st.divider()
-        st.subheader("Pairwise co-occurrence audit")
+        st.markdown("### Are certain ball pairs drawn together too often?")
         st.caption(
-            "Some physical defects (a warped ball, a sticky slot) surface as "
-            "specific ball pairs being drawn together more often than "
-            "chance — invisible to marginal frequency tests. This section "
-            "flags the top outlier pairs."
+            "A physical defect — a warped ball, a sticky slot — often shows "
+            "up as two specific balls being drawn together more often than "
+            "chance, even though each ball on its own looks fine. Marginal "
+            "frequency counts can't see this; pair counts can."
         )
         with st.spinner("Computing pair-co-occurrence null (cached)..."):
             obs_p = pair_cooccurrence_aggregate(era_draws, game)
@@ -1443,56 +1502,48 @@ with tab_audit:
         p_pair_max = float(np.mean(p_null["max_z"] >= obs_p["max_z"]))
         p_pair_chi = float(np.mean(p_null["chi2_like"] >= obs_p["chi2_like"]))
 
-        pm1, pm2 = st.columns(2)
-        pm1.metric(
-            "Max |z| across all pairs",
-            f"{obs_p['max_z']:.2f}",
-            delta=f"MC p = {p_pair_max:.3f}",
-            delta_color="off",
-            help=f"Largest standardized deviation from expected across "
-                 f"{obs_p['n_pairs']:,} pairs. Under H₀ MC null 95th "
-                 f"percentile ≈ {np.percentile(p_null['max_z'], 95):.2f}."
-        )
-        pm2.metric(
-            "χ²-like pair aggregate",
-            f"{obs_p['chi2_like']:.0f}",
-            delta=f"MC p = {p_pair_chi:.3f}",
-            delta_color="off",
-        )
-        pair_pass = (p_pair_max >= 0.05 and p_pair_chi >= 0.05)
-        if pair_pass:
-            st.success(
-                "✅ **No pairwise anomalies detected.** All observed pair "
-                "counts sit inside the MC-calibrated null band."
+        pair_ok = _cat_pass(("Pair",))
+        if pair_ok:
+            st.markdown(
+                f"**✓ No pair anomalies.** Every one of the "
+                f"{obs_p['n_pairs']:,} possible ball pairs was drawn together "
+                f"about as often as chance predicts."
             )
         else:
-            st.warning(
-                "⚠️ Unusual pair-level structure — investigate the top "
-                "outliers below."
-            )
+            st.markdown("**⚠️ Unusual pair-level structure** — see the top "
+                        "outliers below.")
 
-        with st.expander("Top 5 outlier pairs"):
-            st.caption(
-                f"Expected co-occurrence per pair under H₀: "
-                f"{obs_p['expected_per_pair']:.2f}. z-scores use "
-                f"Binomial(D, K(K−1)/[N(N−1)]) variance. Note: an isolated "
-                f"large |z| doesn't itself matter — the MC-calibrated "
-                f"aggregate above corrects for multiple testing."
+        with st.expander("How we tested it"):
+            st.markdown(
+                f"- **What we compute:** for every one of the "
+                f"C({game.n_main}, 2) = {obs_p['n_pairs']:,} distinct "
+                f"pairs, count how many draws contained both.\n"
+                f"- **Expected count per pair under H₀:** "
+                f"D · K(K−1) / [N(N−1)] = {obs_p['expected_per_pair']:.2f} "
+                f"(Binomial variance).\n"
+                f"- **Two aggregates:**\n"
+                f"  - **Max |z| across all pairs:** {obs_p['max_z']:.2f}. "
+                f"MC null 95th percentile "
+                f"{np.percentile(p_null['max_z'], 95):.2f}. "
+                f"Empirical p = {p_pair_max:.4f}.\n"
+                f"  - **χ²-like sum:** Σ (Oᵢ − E)² / E over all pairs = "
+                f"{obs_p['chi2_like']:.0f}. Empirical p = {p_pair_chi:.4f}.\n"
+                f"- **Why MC:** with thousands of pairs any *one* looking "
+                f"extreme is expected. MC-calibrating the max-|z| aggregate "
+                f"corrects for multiple testing across all pairs."
             )
+            st.markdown("**Top-5 outlier pairs (observed vs. expected):**")
             df_pairs = pd.DataFrame(obs_p["top_pairs"])
             st.dataframe(df_pairs, width="stretch", hide_index=True)
 
-    # -----------------------------------------------------------------
-    # Within-era drift (B4) — CUSUM + optional rolling-window visual
-    # -----------------------------------------------------------------
     if game.game_type == "kn":
         st.divider()
-        st.subheader("Within-era drift audit")
+        st.markdown("### Is the machine drifting over time?")
         st.caption(
-            "The pooled chi-square averages away slow physical change — a "
-            "ball whose draw rate slides across years but averages out. "
-            "CUSUM tracks the cumulative deviation of each ball's rate; a "
-            "large max excursion indicates drift."
+            "A perfectly random machine at year 5 might not still be random "
+            "at year 20 — balls wear, springs stretch, one specific ball "
+            "quietly starts coming up 2% more often. Averaged across the "
+            "whole era it looks fine. This check watches for that slow drift."
         )
         with st.spinner("Computing drift null (cached)..."):
             obs_c = cusum_drift_aggregate(era_draws, game)
@@ -1500,97 +1551,75 @@ with tab_audit:
                                          n_sim=200, seed=42)
         p_drift = float(np.mean(c_null["max_excursion"] >= obs_c["max_excursion"]))
 
-        cm1, cm2 = st.columns(2)
-        cm1.metric(
-            "Max cumulative excursion",
-            f"{obs_c['max_excursion']:.1f}",
-            delta=f"MC p = {p_drift:.3f}",
-            delta_color="off",
-            help=f"MC null 95th percentile ≈ "
-                 f"{np.percentile(c_null['max_excursion'], 95):.1f}."
-        )
-        cm2.metric(
-            "Worst ball",
-            f"#{obs_c['worst_ball']}",
-            help="Ball with the largest cumulative deviation over time."
-        )
-        drift_pass = p_drift >= 0.05
-        if drift_pass:
-            st.success("✅ **No detectable drift.** Cumulative deviations "
-                       "for every ball stay within the MC-calibrated null band.")
+        drift_ok = _cat_pass(("Drift",))
+        if drift_ok:
+            st.markdown(
+                "**✓ No detectable drift.** Every ball's cumulative "
+                "deviation from expected stays inside the range we'd "
+                "expect from a stable machine."
+            )
         else:
-            st.warning(f"⚠️ Ball #{obs_c['worst_ball']} shows drift larger "
-                       f"than 95% of simulated fair histories.")
-
-        with st.expander("Rolling-window frequency (visual)"):
-            window = max(50, len(era_draws) // 20)
-            st.caption(
-                f"Frequency of the S1 top-3 balls over rolling windows of "
-                f"{window} draws. The dashed line is the H₀-expected count "
-                f"per window."
-            )
-            # Show top-3 most-frequent balls from S1
-            s1 = s1_most_frequent(era_draws, game)
-            expected_per_window = window * game.k_main / game.n_main
-            dr_fig = go.Figure()
-            for b in s1[:3]:
-                y = rolling_frequency(era_draws, game, ball=b, window=window)
-                if len(y):
-                    dates = [era_draws[t + window - 1][0] for t in range(len(y))]
-                    dr_fig.add_trace(go.Scatter(x=dates, y=y,
-                                                mode="lines",
-                                                name=f"Ball {b}"))
-            dr_fig.add_hline(y=expected_per_window, line_dash="dash",
-                             annotation_text=f"Expected ≈ {expected_per_window:.1f}",
-                             annotation_position="top left")
-            dr_fig.update_layout(xaxis_title="Draw date",
-                                 yaxis_title=f"Appearances in last {window} draws",
-                                 height=300,
-                                 margin=dict(l=10, r=10, t=10, b=10))
-            st.plotly_chart(dr_fig, width="stretch")
-
-    # -----------------------------------------------------------------
-    # Draw-order per-position marginals (B5) — kn games only.
-    # -----------------------------------------------------------------
-    if game.game_type == "kn":
-        with st.expander("Per-position marginals (draw-order test)"):
-            st.caption(
-                "The CSV columns preserve draw order (verified empirically — "
-                "each position's marginal ball mean sits at (N+1)/2). Under "
-                "H₀ each of the K positions is marginally uniform on 1..N. "
-                "Reject → an ordering-specific defect (e.g., a ball being "
-                "consistently drawn first)."
-            )
-            pp_kn_full = chi_square_per_position_kn(era_draws, game)
-            rows = [{"Position": r["position"], "χ²": round(r["chi2"], 2),
-                     "df": r["df"], "p": round(r["p"], 4),
-                     "Verdict": "passes" if r["p"] >= 0.05 else "flag"}
-                    for r in pp_kn_full["per_position"]]
-            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
-            st.caption(
-                "Individual per-position p-values here are uncorrected. "
-                "They roll into the family-wise Holm correction at the top "
-                "of this tab, where any single flag is decisively "
-                "neutralized by the multiple-testing adjustment."
+            st.markdown(
+                f"**⚠️ Ball #{obs_c['worst_ball']}** shows drift larger "
+                "than 95% of simulated fair histories."
             )
 
-    # Bonus-pool audit (Powerball / Mega Ball / Bonus Ball) — K=1 → textbook exact
-    if game.bonus_n:
-        st.markdown(f"#### {game.bonus_label} — separate pool audit (K=1)")
+        # Rolling-window visual — surfaces the "drift" concept
+        window = max(50, len(era_draws) // 20)
+        s1 = s1_most_frequent(era_draws, game)
+        expected_per_window = window * game.k_main / game.n_main
+        dr_fig = go.Figure()
+        for b in s1[:3]:
+            y = rolling_frequency(era_draws, game, ball=b, window=window)
+            if len(y):
+                dates = [era_draws[t + window - 1][0] for t in range(len(y))]
+                dr_fig.add_trace(go.Scatter(x=dates, y=y,
+                                            mode="lines",
+                                            name=f"Ball {b}"))
+        dr_fig.add_hline(y=expected_per_window, line_dash="dash",
+                         annotation_text=f"Expected ≈ {expected_per_window:.1f}",
+                         annotation_position="top left")
+        dr_fig.update_layout(xaxis_title="Draw date",
+                             yaxis_title=f"Appearances in last {window} draws",
+                             height=280,
+                             margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(dr_fig, width="stretch")
         st.caption(
-            f"The {game.bonus_label} is drawn from a separate machine of "
-            f"1..{game.bonus_n}. K=1 means no within-draw correlation, so "
-            f"the textbook χ²(df=N−1) is exact — no MC correction needed."
+            f"Rolling frequency of the current top-3 balls in {window}-draw "
+            "windows. A ball drifting would show a line trending up or down "
+            "instead of wobbling around the dashed baseline."
+        )
+
+        with st.expander("How we tested it"):
+            st.markdown(
+                f"- **Statistic:** for each ball, track its cumulative "
+                f"deviation from expected — CUSUM(t) = Σᵢ≤ₜ (I[b in "
+                f"draws[i]] − p), p = K/N. Under H₀ this walks as a "
+                f"mean-zero process; a large max |CUSUM| indicates drift.\n"
+                f"- **Aggregate:** max |CUSUM| across all balls and all "
+                f"times: {obs_c['max_excursion']:.1f} "
+                f"(worst was ball #{obs_c['worst_ball']}).\n"
+                f"- **MC null:** 200 simulated fair histories at the same "
+                f"D, K, N. 95th percentile "
+                f"{np.percentile(c_null['max_excursion'], 95):.1f}. "
+                f"Empirical p = {p_drift:.4f}.\n"
+                f"- **Note:** the CUSUM statistic isn't Brownian-scaled to "
+                f"the analytic reference, but consistency between observed "
+                f"and simulated is all we need."
+            )
+
+    # Bonus-pool section — before per-position so it flows with the game logic
+    if game.bonus_n:
+        st.divider()
+        st.markdown(f"### Is the {game.bonus_label} fair too?")
+        st.caption(
+            f"{game.bonus_label} draws come from a separate machine (1 to "
+            f"{game.bonus_n}). Checking that pool independently — if that "
+            f"secondary machine had a bias, it wouldn't show up in the main "
+            f"pool tests above."
         )
         bonus_vals = load_bonus_ball(game)
         bchi = chi_square_bonus_ball(bonus_vals, game)
-        bm1, bm2, bm3 = st.columns(3)
-        bm1.metric("Bonus draws", f"{bchi['D']:,}")
-        bm2.metric("χ² statistic", f"{bchi['chi2']:.1f}",
-                   help=f"df = {bchi['df']}")
-        bm3.metric("p-value", f"{bchi['p']:.4f}",
-                   delta="passes" if bchi['p'] >= 0.05 else "REJECT H₀",
-                   delta_color="off")
         blabels = list(range(1, game.bonus_n + 1))
         bfig = go.Figure()
         bfig.add_trace(go.Bar(x=blabels, y=bchi["observed"]))
@@ -1602,55 +1631,131 @@ with tab_audit:
                            height=260, margin=dict(l=10, r=10, t=10, b=10),
                            showlegend=False)
         st.plotly_chart(bfig, width="stretch")
-
-    with st.expander("Statistical details"):
-        st.markdown(
-            f"- **Test:** chi-square goodness-of-fit against a uniform "
-            f"distribution\n"
-            f"- **χ² statistic:** {chi['chi2']:.2f}\n"
-            f"- **p-value (reported):** {chi['p']:.4f}"
-        )
-        if game.game_type == "kn":
-            null_mean = chi.get("null_mean")
-            expected_mean = chi.get("null_expected_mean")
-            n_sim = chi.get("n_sim")
+        bonus_ok = _cat_pass(("Bonus",))
+        if bonus_ok:
             st.markdown(
-                f"- **Method:** Monte Carlo empirical p from **{n_sim:,}** "
-                f"simulated fair K-of-N histories at the same D, K, N. "
-                f"Textbook χ²(df=N−1) is *miscalibrated* for k-of-N draws "
-                f"(within-draw balls are negatively correlated → statistic "
-                f"has mean **N−K = {expected_mean:.0f}**, not N−1 = "
-                f"{chi['df']}).\n"
-                f"- **MC null mean:** {null_mean:.2f} "
-                f"(should ≈ {expected_mean:.0f} — validated).\n"
-                f"- **Analytic χ²(df=N−1) p-value** (deprecated, "
-                f"conservative): {chi['p_analytic']:.4f}"
+                f"**✓ Yes — the {game.bonus_label} is fair.** Same pattern "
+                f"as the main pool: counts sit around the expected line "
+                f"with normal random variation."
             )
         else:
             st.markdown(
-                f"- **Degrees of freedom:** {chi['df']}\n"
-                f"- **Method:** analytic χ²(df=N−1). Digit positions are "
-                f"genuinely independent under H₀, so no MC correction is "
-                f"needed."
+                f"**⚠️ Unusual pattern** in the {game.bonus_label} pool."
             )
+        with st.expander("How we tested it"):
+            st.markdown(
+                f"- **Test:** Pearson χ² against uniform on 1..{game.bonus_n}.\n"
+                f"- **Why it's exact (no MC needed):** K = 1 for the bonus "
+                f"pool. Without within-draw correlation the textbook "
+                f"χ²(df=N−1) reference is genuinely correct.\n"
+                f"- **χ² statistic:** {bchi['chi2']:.2f} (df = {bchi['df']})\n"
+                f"- **p-value:** {bchi['p']:.4f}\n"
+                f"- **{game.bonus_label} draws in era:** {bchi['D']:,}"
+            )
+
+    # Per-position marginals section — for both kn (draw-order test) and
+    # digit games (per-position uniform)
+    if game.game_type == "kn":
+        st.divider()
+        st.markdown("### Does the draw order look random?")
         st.caption(
-            "p ≥ 0.05: consistent with a fair random process. "
-            "p < 0.05: worth investigating (but see family-wise correction "
-            "in Methods — with ~6 game-level tests the α = 0.05 threshold "
-            "produces false positives at the ~30% family-wise error rate)."
+            "The CSV columns preserve draw order (verified empirically — "
+            "each position's marginal ball mean sits at exactly (N+1)/2 "
+            "for every game). Under H₀, each of the K positions is "
+            "marginally uniform on 1..N. This check flags any "
+            "ordering-specific bias like \"ball #7 tends to come out first\"."
         )
-        if game.game_type == "digit":
-            st.markdown("**Per-position test (digit games)**")
-            st.caption(
-                "Each digit position is tested separately. Under a fair "
-                "process, all four p-values should be above 0.05."
+        pp_kn_full = chi_square_per_position_kn(era_draws, game)
+        position_ok = _cat_pass(("Position",))
+        if position_ok:
+            st.markdown(
+                f"**✓ Yes.** All {game.k_main} draw positions look uniform "
+                "on 1..N after family-wise correction."
             )
-            pp = chi_square_per_position_digit(era_draws, game)
+        else:
+            st.markdown(
+                "**⚠️ Position-level deviation** — see the table for which "
+                "position(s) flagged."
+            )
+        with st.expander("How we tested it"):
+            st.markdown(
+                f"- **What we test:** for each draw position i "
+                f"(0..K−1), the marginal distribution of the ball value at "
+                f"that position across all {len(era_draws):,} draws should be "
+                f"uniform on 1..{game.n_main}.\n"
+                f"- **Statistic:** Pearson χ² per position, df = "
+                f"{game.n_main - 1}. Exact under H₀ (each position's "
+                f"marginal is genuinely uniform).\n"
+                f"- Individual per-position p-values are uncorrected; the "
+                f"summary at the top applies Holm across the family."
+            )
             rows = [{"Position": r["position"], "χ²": round(r["chi2"], 2),
                      "df": r["df"], "p": round(r["p"], 4),
-                     "Result": "Passes" if r["p"] >= 0.05 else "Deviation"}
+                     "Result": "passes" if r["p"] >= 0.05 else "flag"}
+                    for r in pp_kn_full["per_position"]]
+            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    elif game.game_type == "digit":
+        st.divider()
+        st.markdown("### Does each digit position look uniform?")
+        st.caption(
+            f"Every position of a {audit_game} draw should be uniform on "
+            f"0–9 independently. Checking each column of the draw record "
+            f"separately catches biases that pool into a fair-looking "
+            f"total but hide at a specific position."
+        )
+        pp = chi_square_per_position_digit(era_draws, game)
+        position_ok = _cat_pass(("Position",))
+        if position_ok:
+            st.markdown(
+                f"**✓ Yes.** All {game.k_main} digit positions look "
+                f"uniform on 0–9 after family-wise correction."
+            )
+        else:
+            st.markdown(
+                "**⚠️ At least one position** shows a non-uniform digit "
+                "distribution."
+            )
+        with st.expander("How we tested it"):
+            st.markdown(
+                f"- **Statistic:** Pearson χ² per position, df = "
+                f"{game.n_main - 1} = 9. Exact under H₀ (positions are "
+                f"genuinely independent for digit games).\n"
+                f"- Under fairness, all {game.k_main} p-values should sit "
+                f"comfortably above 0.05; the Holm correction across "
+                f"everything is at the top."
+            )
+            rows = [{"Position": r["position"], "χ²": round(r["chi2"], 2),
+                     "df": r["df"], "p": round(r["p"], 4),
+                     "Result": "passes" if r["p"] >= 0.05 else "flag"}
                     for r in pp["per_position"]]
             st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    # -----------------------------------------------------------------
+    # Methodology — full technical detail at the bottom
+    # -----------------------------------------------------------------
+    st.divider()
+    with st.expander("Methodology — all tests, raw and Holm-adjusted p-values"):
+        st.markdown(
+            "**Family-wise Holm correction.** Every individual test above "
+            "contributes a raw p-value to a common pool. Holm's step-down "
+            "procedure adjusts each p to control family-wise error at any "
+            "α ≥ max(adjusted). A single game passes iff every "
+            "Holm-adjusted p-value is ≥ 0.05. This protects against "
+            "false-positive noise from running many tests."
+        )
+        df_family = pd.DataFrame({
+            "Test": [n for n, _ in family],
+            "Raw p": [round(p, 4) for _, p in family],
+            "Holm-adjusted p": [round(p, 4) for p in holm_ps],
+            "Verdict": ["passes" if p >= 0.05 else "flag" for p in holm_ps],
+        })
+        st.dataframe(df_family, width="stretch", hide_index=True)
+        st.markdown(
+            "**NIST SP 800-22 not used.** That suite is designed for "
+            "cryptographic RNG bitstreams (≥10⁸ bits) and doesn't apply to "
+            "k-of-N draws. See `findings.md` §3 for full rationale."
+        )
 
 # ==================================================================
 # Experiment — do "hot" numbers actually beat random?
