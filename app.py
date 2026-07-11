@@ -238,6 +238,18 @@ def _get_draws_cached(game_key: str, sig: tuple):
 def get_draws(game_key: str):
     return _get_draws_cached(game_key, _csv_signature(game_key))
 
+@st.cache_data
+def _get_draws_full_cached(game_key: str, sig: tuple):
+    """Full draw dicts (date, slot, main, bonus) for the era. Bonus is
+    None for games without a bonus pool. Used anywhere the display needs
+    the bonus/Mega Ball alongside the main balls."""
+    g = GAMES[game_key]
+    rows = load_draws_full(g)
+    return [r for r in rows if r["date"] >= g.era_start]
+
+def get_draws_full(game_key: str):
+    return _get_draws_full_cached(game_key, _csv_signature(game_key))
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def _all_top_prizes_cached() -> dict:
     """Fetch every game's current top prize in ONE cached call, using a
@@ -324,17 +336,26 @@ with header_r:
 # Overview — one card per game
 # ==================================================================
 
-def _format_recent_line(draw_date, nums, ref_seq, game_type):
+def _format_recent_line(draw_date, nums, ref_seq, game_type,
+                        bonus=None, ref_bonus=None):
     """One row of the recent-draws list. Matches vs a reference ticket are
-    bold green. The reference is typically the Winning-strategy ticket.
-    - kn:    highlight ball if it's in the reference set.
+    bold blue (matches the Winning-strategy color convention).
+    - kn:    highlight ball if it's in the reference set. Main balls are
+             sorted ascending for display so we match how the official
+             Texas Lottery pages present them.
     - digit: highlight digit at position i if it equals ref_seq[i].
+             Digits are shown in *drawn* order (positional games).
+    If a bonus ball is supplied it's appended after the main sequence as
+    "+ <n>", also blue if it matches the reference bonus, gray otherwise.
     Returns a raw HTML fragment (no <p>/<small> wrapper) so callers can pack
-    multiple rows into a single tight container. Numbers use explicit CSS
-    margin (not &nbsp;) so horizontal spacing is even and adjustable."""
+    multiple rows into a single tight container."""
     ref_set = set(ref_seq)
+    # k-of-N draws come out of the machine in drawn order — sort ascending
+    # for display so it matches texaslottery.com. Digit games stay in
+    # positional order.
+    display_nums = sorted(nums) if game_type == "kn" else list(nums)
     parts = []
-    for i, n in enumerate(nums):
+    for i, n in enumerate(display_nums):
         if game_type == "kn":
             hit = n in ref_set
         else:
@@ -347,6 +368,20 @@ def _format_recent_line(draw_date, nums, ref_seq, game_type):
             parts.append(
                 f"<span style='color:#8a8a8a;margin-right:0.75rem;'>{n}</span>"
             )
+    if bonus is not None:
+        b_hit = (ref_bonus is not None and bonus == ref_bonus)
+        b_color = "#60a5fa" if b_hit else "#8a8a8a"
+        b_weight = "700" if b_hit else "500"
+        b_html = (
+            f"<span style='display:inline-block;border:1px solid {b_color};"
+            f"color:{b_color};font-weight:{b_weight};"
+            f"padding:0 0.35rem;margin-left:0.25rem;"
+            f"line-height:1.2;border-radius:2px;'>{bonus}</span>"
+        )
+        parts.append(
+            f"<span style='color:#8a8a8a;margin:0 0.15rem 0 0.4rem;'>+</span>"
+            f"{b_html}"
+        )
     date_label = draw_date.strftime("%m/%d/%y")
     return (f"<span style='color:#8a8a8a;margin-right:1rem;'>"
             f"{date_label}</span>" + "".join(parts))
@@ -567,19 +602,23 @@ def render_overview_card(g_name: str):
     # k-of-N game; digit games use the digit-anti-collision variant.
     if g_cfg.game_type == "kn":
         highlight_seq = anti_collision_sequence(g_cfg, draws=era_d)
+        highlight_bonus = (anti_collision_bonus(g_cfg)
+                           if g_cfg.bonus_n else None)
     else:
         highlight_seq = digit_anti_collision(
             per_position_counters(era_d, g_cfg.k_main),
             g_cfg.k_main, g_cfg.n_main,
         )
+        highlight_bonus = None
 
-    # Pack all 5 rows into a single tight container so each row's line-height
-    # is controlled directly (avoids Streamlit's default paragraph margins).
+    # Pull the last 5 draws with bonus balls attached — the plain era_d
+    # tuples don't carry the Mega Ball / Powerball / Bonus Ball.
+    era_full = get_draws_full(g_name)
     recent_rows_html = "".join(
         f"<div style='line-height:1.5;font-size:0.88rem;'>"
-        f"{_format_recent_line(dt, nums, highlight_seq, g_cfg.game_type)}"
+        f"{_format_recent_line(row['date'], row['main'], highlight_seq, g_cfg.game_type, bonus=row.get('bonus'), ref_bonus=highlight_bonus)}"
         f"</div>"
-        for dt, nums in reversed(era_d[-5:])
+        for row in reversed(era_full[-5:])
     )
     st.markdown(
         f"<div style='margin-top:1rem;margin-bottom:1.1rem;'>"
