@@ -2116,7 +2116,7 @@ with tab_audit:
             "- **Seasonal transitions** — ± 3 days of a solstice or "
             "equinox\n"
             "- **Planetary conjunctions** — verified conjunction dates "
-            "(Jupiter–Saturn 2020-12-21 'Great Conjunction', plus 18 "
+            "(Jupiter-Saturn 2020-12-21 'Great Conjunction', plus 18 "
             "other listed Venus-Jupiter / Mars-Jupiter / Mercury "
             "conjunctions in the era)\n\n"
             "**Result.** 0 hits. Smallest p = 0.20 (Cash Five "
@@ -2127,7 +2127,7 @@ with tab_audit:
     with st.expander("8. Machine-learning predictive models (12 head-to-head tests)"):
         st.markdown(
             "**Setup.** Feature-engineered per-ball classifiers using "
-            "172–220 features per draw:\n"
+            "172-220 features per draw:\n"
             "- Date features (day of week, month, days-since-start)\n"
             "- Lunar phase and spring/neap flag\n"
             "- Sunspot number, geomagnetic Ap, weather (temp, precip)\n"
@@ -2158,7 +2158,7 @@ with tab_audit:
     with st.expander("Meta-analysis across all 431 tests"):
         st.markdown(
             "**Two independent aggregate lenses, both pointing null.**\n\n"
-            "**A. Kolmogorov–Smirnov of aggregate p-value distribution "
+            "**A. Kolmogorov-Smirnov of aggregate p-value distribution "
             "vs. uniform.**\n"
             "Under H₀, p-values across the whole test family should be "
             "uniform on [0, 1]. Observed distribution:\n"
