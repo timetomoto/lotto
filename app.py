@@ -10,7 +10,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from games import GAMES, GameConfig
+from games import GAMES
 from loader import load_draws, filter_era, load_bonus_ball, load_draws_full
 from checker import (check_ticket, PICK3_PLAY_TYPES, DAILY4_PLAY_TYPES)
 from strategies import (
@@ -22,7 +22,7 @@ from stats_tests import (
     chi_square_ball_frequency, chi_square_per_position_digit,
     chi_square_per_position_kn,
     chi_square_bonus_ball, paired_permutation_test, null_band_for_matches,
-    historical_match_distribution, walk_forward_backtest,
+    walk_forward_backtest,
     ljung_box_per_ball, runs_test_draw_sums, gap_test_aggregate,
     pair_cooccurrence_aggregate, cusum_drift_aggregate, rolling_frequency,
     holm_correction,
@@ -36,9 +36,9 @@ import os
 from qrng import load_or_pull
 import experiment
 import draw_schedule as sched
-from draw_schedule import next_draw_datetime, draws_for_day, CT
+from draw_schedule import next_draw_datetime, CT
 from game_info import GAME_INFO
-from prize_scraper import fetch_top_prize, game_url as tx_game_url
+from prize_scraper import fetch_all_top_prizes, game_url as tx_game_url
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 
@@ -131,6 +131,10 @@ def render_next_draw(game_cfg, now_ct: datetime | None = None) -> None:
     )
 
 def _maybe_auto_refresh() -> None:
+    """Run download_data.sh at most once per session, only if CSVs on disk
+    are stale. Bounded 30-second subprocess timeout so a slow Texas Lottery
+    response can never freeze the first render. Silent-fallback to whatever
+    is on disk if the refresh fails."""
     if st.session_state.get("_auto_refresh_ran"):
         return
     st.session_state["_auto_refresh_ran"] = True
@@ -146,7 +150,7 @@ def _maybe_auto_refresh() -> None:
         return
     try:
         subprocess.run(["bash", str(script)], capture_output=True,
-                       timeout=90, check=False)
+                       timeout=30, check=False)
         st.cache_data.clear()
     except Exception:
         pass  # keep serving what's on disk
@@ -225,10 +229,16 @@ def get_draws(game_key: str):
     return _get_draws_cached(game_key, _csv_signature(game_key))
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def _top_prize_cached(game_name: str) -> str | None:
-    """Wrapped so Streamlit caches the scrape with a 30-min TTL — the
-    official jackpot doesn't move faster than that."""
-    return fetch_top_prize(game_name)
+def _all_top_prizes_cached() -> dict:
+    """Fetch every game's current top prize in ONE cached call, using a
+    thread pool internally so all rolling-jackpot games fire in parallel.
+    Total wall time is bounded by the slowest single game's timeout (~4s)
+    rather than the sum across 4 games (~16s). Cached 30 min."""
+    return fetch_all_top_prizes()
+
+def _top_prize_for(game_name: str) -> "str | None":
+    """Convenience wrapper for a single card."""
+    return _all_top_prizes_cached().get(game_name)
 
 @st.cache_data
 def _get_bonus_cached(game_key: str, sig: tuple):
@@ -377,7 +387,7 @@ def render_overview_card(g_name: str):
     # Estimated top prize — prominent, immediately under the title.
     # Live-scraped from texaslottery.com for rolling jackpots; static
     # string for fixed-prize games. Silent-hide on any scrape failure.
-    top_prize = _top_prize_cached(g_name)
+    top_prize = _top_prize_for(g_name)
     if top_prize:
         st.markdown(
             f"<div style='margin:0 0 0.3rem 0;font-size:0.95rem;'>"
@@ -1107,12 +1117,6 @@ with tab_purchases:
         end = start + PAGE_SIZE
         page_rows = []
         for r in recs[start:end]:
-            def fmt_seq(seq):
-                if r["game"] in ("Pick 3", "Daily 4"):
-                    return "-".join(str(x) for x in seq)
-                return " ".join(f"{x:>2}" for x in sorted(seq)) \
-                       if r["game"] != "Pick 3" and r["game"] != "Daily 4" \
-                       else "-".join(str(x) for x in seq)
             s1_str = ("-".join(str(x) for x in r["s1"])
                       if r["game"] in ("Pick 3", "Daily 4")
                       else " ".join(str(x) for x in sorted(r["s1"])))

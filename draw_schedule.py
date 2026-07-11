@@ -72,21 +72,3 @@ def next_draw_datetime(game: GameConfig,
                 return dt
     return None
 
-def draws_for_day(game: GameConfig, day: date) -> List[datetime]:
-    """All scheduled draw datetimes (tz-aware CT) for a specific day, in
-    order. Empty list if the game doesn't draw that weekday."""
-    if day.weekday() not in game.draw_weekdays or not game.draw_times:
-        return []
-    return [datetime.combine(day, time(*(int(x) for x in t.split(":"))),
-                              tzinfo=CT)
-            for t in game.draw_times]
-
-def per_day_cost(games_playing: List[str], date_: date) -> float:
-    """Minimum daily spend if playing one ticket for every scheduled draw
-    (multi-daily games count each of their four draws)."""
-    total = 0.0
-    for name in games_playing:
-        g = GAMES[name]
-        if date_.weekday() in g.draw_weekdays:
-            total += g.ticket_cost_low * g.draws_per_day
-    return total

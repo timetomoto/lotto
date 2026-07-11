@@ -8,7 +8,7 @@ from typing import List, Tuple, Dict
 from collections import Counter
 import math
 import numpy as np
-from scipy.stats import chisquare, geom
+from scipy.stats import chisquare
 from statsmodels.sandbox.stats.runs import runstest_1samp
 from statsmodels.stats.diagnostic import acorr_ljungbox
 from loader import Draw
@@ -95,15 +95,6 @@ def chi_square_per_position_digit(draws: List[Draw], game: GameConfig) -> Dict:
                         "chi2": float(chi2), "df": game.n_main - 1, "p": float(p)})
     return {"per_position": per_pos}
 
-def runs_test_above_below_median(draws: List[Draw], game: GameConfig) -> Dict:
-    """Wald–Wolfowitz runs test on the sequence of draw *sums* vs. their median.
-    Detects serial dependence in the aggregate draw statistic across time."""
-    sums = np.array([sum(nums) for _, nums in draws], dtype=float)
-    if len(sums) < 10:
-        return {"stat": float("nan"), "p": float("nan"), "n": len(sums)}
-    stat, p = runstest_1samp(sums, cutoff="median", correction=True)
-    return {"stat": float(stat), "p": float(p), "n": len(sums)}
-
 def gap_test_chi_square(draws: List[Draw], game: GameConfig, target_ball: int,
                        max_gap: int = 40) -> Dict:
     """For a single ball, gaps between consecutive appearances should follow
@@ -155,18 +146,6 @@ def gap_test_chi_square(draws: List[Draw], game: GameConfig, target_ball: int,
     chi2, p = chisquare(obs_arr, exp_arr)
     return {"chi2": float(chi2), "p": float(p), "n_gaps": len(gaps),
             "target_ball": target_ball, "n_bins": len(obs_arr)}
-
-def ljung_box_on_ball_indicator(draws: List[Draw], game: GameConfig,
-                                target_ball: int, lags: int = 10) -> Dict:
-    """Ljung-Box on the indicator series 1{target_ball in draw_i}.
-    Detects lag-k autocorrelation."""
-    ind = np.array([1 if target_ball in nums else 0 for _, nums in draws],
-                   dtype=float)
-    if len(ind) < lags + 5:
-        return {"stat": float("nan"), "p": float("nan"), "lags": lags}
-    lb = acorr_ljungbox(ind, lags=[lags], return_df=True)
-    return {"stat": float(lb["lb_stat"].iloc[0]), "p": float(lb["lb_pvalue"].iloc[0]),
-            "lags": lags}
 
 def paired_permutation_test(a: np.ndarray, b: np.ndarray,
                             n_perm: int = 10_000, seed: int = 0) -> Dict:
@@ -522,43 +501,6 @@ def walk_forward_backtest(draws, game: GameConfig, burn_in: int = 50) -> Dict:
         "exp_prop": exp_prop,
         "n_scored": n_scored,
         "burn_in": burn_in,
-        "K": K, "N": N,
-    }
-
-def historical_match_distribution(draws, sequence, game: GameConfig) -> Dict:
-    """For a fixed sequence (e.g., S1), count how often it matched 0..K balls
-    across each historical draw. Compares against the theoretical
-    Hypergeometric(N,K,K) for kn games or Binomial(K, 1/N) for digit games.
-
-    Note: this is a data-snooped backtest when the sequence was derived from
-    the same draws. Under H₀ the observed distribution should still match the
-    theoretical — that's the point of the comparison.
-    """
-    from scipy.stats import hypergeom, binom
-    seq_set = set(sequence)
-    K, N = game.k_main, game.n_main
-    per_draw = []
-    for _, nums in draws:
-        if game.game_type == "kn":
-            per_draw.append(len(seq_set & set(nums)))
-        else:
-            per_draw.append(sum(1 for i, n in enumerate(nums)
-                                if i < len(sequence) and n == sequence[i]))
-    total = len(per_draw)
-    obs_counts = [0] * (K + 1)
-    for m in per_draw:
-        if 0 <= m <= K:
-            obs_counts[m] += 1
-    obs_prop = [c / total for c in obs_counts]
-    if game.game_type == "kn":
-        exp_prop = [float(hypergeom.pmf(m, N, K, K)) for m in range(K + 1)]
-    else:
-        exp_prop = [float(binom.pmf(m, K, 1.0 / N)) for m in range(K + 1)]
-    exp_counts = [p * total for p in exp_prop]
-    return {
-        "total_draws": total, "per_draw": per_draw,
-        "obs_counts": obs_counts, "exp_counts": exp_counts,
-        "obs_prop": obs_prop, "exp_prop": exp_prop,
         "K": K, "N": N,
     }
 

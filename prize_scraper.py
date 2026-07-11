@@ -46,7 +46,20 @@ def game_url(game_name: str) -> str:
             f"{game_name.replace(' ', '_')}/index.html")
 
 
-def fetch_top_prize(game_name: str, timeout: float = 10.0) -> Optional[str]:
+def _parse_jackpot(html: str) -> Optional[str]:
+    """Extract '$X Million' / '$X,XXX' style top prize from a game page."""
+    text = _WS_RE.sub(" ", _TAG_RE.sub(" ", html))
+    idx = text.find("Estimated Jackpot")
+    if idx == -1:
+        return None
+    m = _AMOUNT_RE.search(text, idx, idx + 500)
+    if not m:
+        return None
+    amount, suffix = m.group(1), m.group(2)
+    return f"${amount} {suffix}".strip() if suffix else f"${amount}"
+
+
+def fetch_top_prize(game_name: str, timeout: float = 4.0) -> Optional[str]:
     """Return a display string for the current top prize, or None on any
     scrape failure. Fixed-prize games always return their static string.
     """
@@ -63,12 +76,37 @@ def fetch_top_prize(game_name: str, timeout: float = 10.0) -> Optional[str]:
             html = r.read().decode("utf-8", errors="ignore")
     except Exception:
         return None
-    text = _WS_RE.sub(" ", _TAG_RE.sub(" ", html))
-    idx = text.find("Estimated Jackpot")
-    if idx == -1:
-        return None
-    m = _AMOUNT_RE.search(text, idx, idx + 500)
-    if not m:
-        return None
-    amount, suffix = m.group(1), m.group(2)
-    return f"${amount} {suffix}".strip() if suffix else f"${amount}"
+    return _parse_jackpot(html)
+
+
+def fetch_all_top_prizes(timeout: float = 4.0) -> dict:
+    """Fetch every game's top prize concurrently. Fixed-prize games short-
+    circuit; rolling-jackpot games run in parallel threads so total wall
+    time is bounded by the slowest single request, not their sum. Any
+    thread that fails contributes None (no error surfaced)."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    result: dict = {}
+    rolling: list = []
+    for name in GAMES_ALL:
+        if name in _FIXED_TOP_PRIZES:
+            result[name] = _FIXED_TOP_PRIZES[name]
+        elif name in _GAMES_WITH_ROLLING_JACKPOT:
+            rolling.append(name)
+        else:
+            result[name] = None
+    with ThreadPoolExecutor(max_workers=len(rolling) or 1) as pool:
+        futures = {
+            pool.submit(fetch_top_prize, name, timeout): name
+            for name in rolling
+        }
+        for fut in as_completed(futures):
+            result[futures[fut]] = fut.result()
+    return result
+
+
+# Names for the parallel fetcher — declared here so we don't import GAMES
+# and cause a circular reference at module load.
+GAMES_ALL = (
+    "Lotto Texas", "Mega Millions", "Powerball", "Cash Five",
+    "Texas Two Step", "All or Nothing", "Pick 3", "Daily 4",
+)

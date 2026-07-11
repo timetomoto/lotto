@@ -21,8 +21,8 @@ from __future__ import annotations
 import hashlib
 import os
 import numpy as np
-from typing import Tuple, Dict
-from games import GAMES, GameConfig
+from typing import Dict
+from games import GameConfig
 
 CACHE_DIR = "data/mc_cache"
 
@@ -47,22 +47,9 @@ def simulate_kn_counts(D: int, K: int, N: int, n_sim: int,
         out[i] = counts
     return out
 
-def simulate_kn_draws(D: int, K: int, N: int, rng: np.random.Generator
-                      ) -> np.ndarray:
-    """Return a (D, K) int array of one simulated fair K-of-N history.
-    Balls returned are 0-indexed here; add 1 for 1-indexed display.
-    """
-    r = rng.random((D, N))
-    return np.argpartition(r, K - 1, axis=1)[:, :K]
-
 # ------------------------------------------------------------------
 # A1 — Chi-square null for k-of-N frequency audit
 # ------------------------------------------------------------------
-
-def chi_square_from_counts(counts_row: np.ndarray, D: int, K: int,
-                           N: int) -> float:
-    exp = D * K / N
-    return float(np.sum((counts_row - exp) ** 2 / exp))
 
 def _cache_key(game_key: str, tag: str, n_sim: int, seed: int,
                sig: tuple) -> str:
@@ -330,13 +317,3 @@ def mc_walk_forward_pvalue(observed: int, null: np.ndarray) -> Dict:
         "n_sim": int(len(null)),
     }
 
-def mc_chi_square_pvalue(observed_chi2: float, null_chi2: np.ndarray) -> Dict:
-    """Empirical two-things: (1) fraction of null >= observed (upper-tail p),
-    (2) the mean of the null — should land near N−K, not N−1."""
-    p = float(np.mean(null_chi2 >= observed_chi2))
-    return {
-        "empirical_p": p,
-        "null_mean": float(null_chi2.mean()),
-        "null_std": float(null_chi2.std()),
-        "n_sim": len(null_chi2),
-    }

@@ -39,10 +39,8 @@ from collections import Counter
 from datetime import date
 from typing import Dict, List, Optional
 from games import GAMES, GameConfig
-from loader import load_draws_full, load_bonus_ball
-from strategies import (
-    s1_from_counter, s1_from_position_counters, top_bonus_by_frequency,
-)
+from loader import load_draws_full
+from strategies import s1_from_counter, s1_from_position_counters
 from checker import check_ticket
 
 CACHE_DIR = "data/purchase_cache"
@@ -206,11 +204,6 @@ def simulate_game(game_name: str) -> List[dict]:
     with open(cache_p, "w") as f:
         json.dump(log, f)
     return log
-
-
-def simulate_all_games() -> Dict[str, List[dict]]:
-    """All 8 games as {game_name: [log records]}. Disk-cached per game."""
-    return {name: simulate_game(name) for name in GAMES}
 
 
 def summarize(records: List[dict]) -> Dict:
