@@ -370,11 +370,16 @@ def _format_recent_line(draw_date, nums, ref_seq, game_type,
             )
     if bonus is not None:
         b_hit = (ref_bonus is not None and bonus == ref_bonus)
-        b_color = "#60a5fa" if b_hit else "#8a8a8a"
+        b_text_color = "#60a5fa" if b_hit else "#8a8a8a"
+        # Outline is a much lower-contrast gray than the text so the box
+        # is a subtle frame, not a heavy border. Hits keep the blue frame
+        # so the highlight still reads.
+        b_border_color = "#60a5fa" if b_hit else "#3a3a3a"
         b_weight = "700" if b_hit else "500"
         b_html = (
-            f"<span style='display:inline-block;border:1px solid {b_color};"
-            f"color:{b_color};font-weight:{b_weight};"
+            f"<span style='display:inline-block;"
+            f"border:1px solid {b_border_color};"
+            f"color:{b_text_color};font-weight:{b_weight};"
             f"padding:0 0.35rem;margin-left:0.25rem;"
             f"line-height:1.2;border-radius:2px;'>{bonus}</span>"
         )
