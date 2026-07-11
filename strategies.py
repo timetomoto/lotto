@@ -49,6 +49,64 @@ def most_frequent_bonus(game: GameConfig, bonus_values) -> "int | None":
     top = top_bonus_by_frequency(game, bonus_values, k=1)
     return top[0] if top else None
 
+# ---- Collision-avoidance (the honest player-side edge) --------------
+
+# Empirically documented player-picking biases across state lotteries:
+#   - Balls 1-31 ("birthday range") are dramatically over-picked
+#   - Specific numbers commonly considered lucky get extra love
+#   - Multiples of 5 attract round-number bias
+# Player behavior isn't statistical prediction — it's game theory:
+# picking unpopular numbers doesn't change P(win), it changes E[payout | win]
+# for games with jackpots that split among multiple winners.
+
+LUCKY_NUMBERS = {7, 11, 13, 17, 21, 23, 27}  # documented popularity spikes
+
+def collision_risk_score(ball: int) -> float:
+    """Higher = more commonly picked by other players (bad for prize-splitting).
+    Roughly calibrated against published lottery-selection studies."""
+    score = 0.0
+    if 1 <= ball <= 31:
+        score += 1.0            # birthday-range bias — the biggest effect
+    if ball in LUCKY_NUMBERS:
+        score += 0.5            # lucky-number extra
+    if ball % 5 == 0 and 1 <= ball <= 50:
+        score += 0.2            # round-number bias
+    return score
+
+def anti_collision_sequence(game: GameConfig) -> tuple:
+    """Return K numbers optimized to be UNPOPULAR — least likely to be
+    picked by other players — so that if the ticket wins, it's less
+    likely to share the jackpot. Deterministic tie-break by ball number.
+
+    Explicitly NOT a prediction. Win probability is identical to any
+    other single ticket at 1 / C(N, K). This is only about *conditional*
+    expected payout given a win, for games with rolling shared jackpots.
+    """
+    K, N = game.k_main, game.n_main
+    # Sort balls by (risk score asc, ball number asc)
+    ordered = sorted(range(1, N + 1),
+                     key=lambda b: (collision_risk_score(b), b))
+    return tuple(sorted(ordered[:K]))
+
+def anti_collision_bonus(game: GameConfig) -> "int | None":
+    """Anti-collision pick for the bonus pool.
+    Within a pool that's usually fully inside the birthday range (1-25,
+    1-26), all values carry the birthday penalty equally, so we pick the
+    HIGHEST non-lucky non-multiple-of-5 value — high numbers are picked
+    less often than mid-range picks even inside the birthday window.
+    None if the game has no bonus pool."""
+    if not game.bonus_n:
+        return None
+    for b in range(game.bonus_n, 0, -1):
+        if b in LUCKY_NUMBERS: continue
+        if b % 5 == 0: continue
+        return b
+    return game.bonus_n
+
+def birthday_ball_count(seq) -> int:
+    """How many of the K balls fall in the 1-31 'birthday range'."""
+    return sum(1 for b in seq if 1 <= b <= 31)
+
 def s1_from_position_counters(counters: Sequence[Counter], K: int, N: int
                               ) -> Tuple[int, ...]:
     """Argmax digit at each position for a K-position digit game.

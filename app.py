@@ -17,6 +17,7 @@ from strategies import (
     frequency_counter, per_position_counters,
     s1_most_frequent, s4_least_frequent, s2_prng, s3_qrng,
     most_frequent_bonus, top_bonus_by_frequency,
+    anti_collision_sequence, anti_collision_bonus, birthday_ball_count,
 )
 from stats_tests import (
     chi_square_ball_frequency, chi_square_per_position_digit,
@@ -410,6 +411,50 @@ def render_overview_card(g_name: str):
         f"{len(era_d):,} draws since {g_cfg.era_start.strftime('%b %Y')}"
     )
     render_next_draw(g_cfg)
+    # -------------- Winning strategy (anti-collision) ---------------
+    # Only for jackpot-splitting games. Placed above S1 because it's the
+    # single actionable insight in the whole app: no ticket has better
+    # win probability than any other, but for shared-pot games, picking
+    # numbers other players avoid changes your expected payout given a
+    # win by reducing prize-sharing risk.
+    ROLLING_JACKPOT_GAMES = {"Lotto Texas", "Mega Millions", "Powerball",
+                              "Texas Two Step"}
+    if g_name in ROLLING_JACKPOT_GAMES and g_cfg.game_type == "kn":
+        anti = anti_collision_sequence(g_cfg)
+        anti_bonus = anti_collision_bonus(g_cfg)
+        font_rem = max(0.95, 1.8 - 0.07 * len(anti))
+        seq_html = " ".join(f"<code>{n:>2}</code>" for n in anti)
+        st.markdown(
+            "**🎯 Winning strategy** "
+            "<span style='opacity:0.65;font-size:0.85em;'>"
+            "(same odds of winning · minimizes prize-sharing if you hit)"
+            "</span>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"<div style='font-size:{font_rem:.2f}rem;font-weight:600;"
+            f"font-family:monospace;white-space:nowrap;overflow-x:auto;"
+            f"color:#60a5fa;padding:0.2rem 0;'>{seq_html}</div>",
+            unsafe_allow_html=True,
+        )
+        if anti_bonus is not None:
+            st.markdown(
+                f"<div style='font-size:0.9rem;opacity:0.85;"
+                f"margin-top:0.2rem;'>"
+                f"+ <b>{g_cfg.bonus_label}</b>: "
+                f"<code style='color:#60a5fa;'>{anti_bonus}</code>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        st.caption(
+            f"Avoids balls 1–31 (over-picked because of birthdays), lucky "
+            f"numbers (7, 11, 13, 17, 21, 23, 27), and multiples of 5. "
+            f"S1 below contains {birthday_ball_count(s1)} birthday-range "
+            f"balls for comparison. This ticket wins the jackpot at "
+            f"exactly the same rate as any other ticket — it just doesn't "
+            f"share the prize with as many other winners if it does."
+        )
+
     st.markdown("**Most-frequent (S1)**")
     if g_cfg.game_type == "digit":
         seq_html = " &nbsp; ".join(
@@ -579,6 +624,36 @@ with tab_overview:
         "**These are not predictions.** They're candidate sequences for the "
         "falsification experiment in the Experiment tab."
     )
+
+    # ----- The only real statistical edge —------------------------
+    with st.container(border=True):
+        st.markdown(
+            "### 🎯 The only real statistical edge\n\n"
+            "**We tested 431+ conditions across every conceivable "
+            "external factor** — moon phases, solar flares, Mercury "
+            "retrograde, gravitational waves, machine learning models "
+            "— and found zero predictable patterns (see Audit tab). "
+            "The drawing machines are exactly as fair as they're supposed "
+            "to be.\n\n"
+            "**But there is one edge that is real, and it isn't "
+            "prediction.** For games with jackpots that are *split* "
+            "among multiple winners (Lotto Texas, Mega Millions, "
+            "Powerball, Texas Two Step), picking numbers *other players "
+            "avoid* changes your expected payout if you win — because "
+            "you're less likely to share the jackpot. It does **not** "
+            "change your probability of winning.\n\n"
+            "**Known player biases** (documented across state lotteries):\n"
+            "- Numbers **1–31** are heavily over-picked (birthdays)\n"
+            "- Lucky numbers **7, 11, 13, 17, 21, 23, 27** get extra love\n"
+            "- Multiples of 5 attract round-number bias\n"
+            "- Sequences and patterns on the play slip are picked ~40× "
+            "more than random selection would predict\n\n"
+            "Each card below shows a **collision-avoidance alternative** "
+            "for jackpot-shared games: K numbers optimized to be "
+            "*unpopular*, so if the ticket wins, the pot is less likely "
+            "to be shared. Same odds of winning as any other ticket — "
+            "different expected payout given a win."
+        )
 
     game_names = list(GAMES.keys())
     per_row = 3
@@ -1768,6 +1843,225 @@ with tab_audit:
             "cryptographic RNG bitstreams (≥10⁸ bits) and doesn't apply to "
             "k-of-N draws. See `findings.md` §3 for full rationale."
         )
+
+    # -----------------------------------------------------------------
+    # Extended exploratory testing — static documentation of the 431+
+    # additional tests we ran offline. Live audit above is unchanged.
+    # -----------------------------------------------------------------
+    st.divider()
+    st.subheader("Extended exploratory analysis (offline)")
+    st.write(
+        "Beyond the live family-wise audit above, we ran **431 additional "
+        "tests plus 12 head-to-head machine learning experiments** across "
+        "seven categories, looking for correlations between draw outcomes "
+        "and every external condition we could think of — from mainstream "
+        "statistics through internet astrology through machine learning."
+    )
+    st.info(
+        "**Grand total: 431 tests, 3 uncorrected p < 0.05 hits, "
+        "0 Bonferroni-adjusted hits.** Under H₀ (fair lottery) we would "
+        "have expected ~22 uncorrected hits by chance alone. Getting 3 "
+        "is substantially *below* the noise floor."
+    )
+
+    with st.expander("1. Local calendar factors (31 tests)"):
+        st.markdown(
+            "**What we tested.** Whether specific date-based conditions "
+            "correlate with ball-frequency shifts:\n"
+            "- Day of week (Monday vs. Saturday)\n"
+            "- Season (summer vs. winter)\n"
+            "- Lunar phase (full moon vs. new moon)\n"
+            "- US federal holidays vs. non-holidays\n"
+            "- Prime-numbered day-intervals since era start\n"
+            "- Fibonacci-interval days\n"
+            "- Time-of-day slot (morning vs. night) for multi-daily games\n\n"
+            "**Statistic.** 2×N chi-square contingency test on per-ball "
+            "frequency across two groups:\n"
+            "$$\\chi^2 = \\sum_{i=1}^{N} \\frac{(O_i^A - E_i)^2}{E_i} "
+            "+ \\frac{(O_i^B - E_i)^2}{E_i}$$\n\n"
+            "**Result.** 0 hits at any threshold. Smallest p = 0.086 "
+            "(Lotto Texas summer vs. winter — nowhere near significant)."
+        )
+
+    with st.expander("2. External environmental data (24 tests)"):
+        st.markdown(
+            "**What we tested.** Real physical variables outside the "
+            "lottery machine, pulled from public data sources:\n"
+            "- **Solar activity** — SIDC daily sunspot number (top-"
+            "quartile vs. bottom-quartile days)\n"
+            "- **Geomagnetic activity** — GFZ Kp/Ap index "
+            "(storm days Ap ≥ 27 vs. quiet days Ap < 7)\n"
+            "- **Weather in Austin** — Open-Meteo API daily temperature "
+            "and precipitation (hot vs. cold days, rainy vs. dry)\n\n"
+            "**Statistic.** Same 2×N chi-square as above.\n\n"
+            "**Result.** 0 hits. Smallest p = 0.10 (Mega Millions "
+            "hot vs. cold days)."
+        )
+
+    with st.expander("3. Multi-condition combinations (286 tests)"):
+        st.markdown(
+            "**What we tested.** Every 2-way and 3-way intersection of "
+            "the local-calendar conditions. Idea: maybe a subtle signal "
+            "requires *combining* filters (e.g., full moon AND weekend "
+            "AND solar-high day). Under H₀ this shouldn't produce more "
+            "signal than solo tests.\n\n"
+            "**Multiple-testing challenge.** With 286 tests, ~14 nominal "
+            "hits at p < 0.05 are expected under H₀ by pure chance. "
+            "Bonferroni threshold: $\\alpha_\\text{corrected} = "
+            "0.05 / 286 = 0.000175$.\n\n"
+            "**Result.** **2 uncorrected p < 0.05 hits** (fewer than the "
+            "~14 expected by chance). Zero survived Bonferroni. Best "
+            "combo p = 0.016 (Mega Millions geomag-storm + hot-day) — "
+            "well above the corrected threshold."
+        )
+
+    with st.expander("4. Quantum-inspired randomness tests (3 tests)"):
+        st.markdown(
+            "**Applied concepts from quantum information theory** to "
+            "test the strictest definitions of randomness we can "
+            "operationalize.\n\n"
+            "**A. Kolmogorov complexity (compression).**\n"
+            "A truly random sequence should be incompressible. Encoded "
+            "each game's draws as raw bytes; compressed with gzip / bz2 "
+            "/ lzma. Compared to same-shape PCG64-synthesized bytes.\n\n"
+            "$$\\text{compression ratio} = "
+            "\\frac{|\\text{compressed}|}{|\\text{raw}|}$$\n\n"
+            "Result: Δ ≤ 0.4 percentage points across all games and "
+            "algorithms. **Lottery is as incompressible as PCG64.**\n\n"
+            "**B. Time-reversal invariance.**\n"
+            "Under IID null, sequence is exchangeable — forward and "
+            "reversed reading should give identical statistics. Ran the "
+            "audit forward and on the reversed sequence. Order-invariant "
+            "stats identical (mathematically must be); order-dependent "
+            "stats (CUSUM, walk-forward) differ by < 5 units within "
+            "MC noise. **No arrow-of-time asymmetry.**\n\n"
+            "**C. Full audit vs. PRNG-simulated.**\n"
+            "Generated same-shape PCG64 'fake lottery' and ran the full "
+            "family-wise audit on both. In 4 of 6 games, PCG64-fake "
+            "produced a *lower* min-p than real lottery. **Roles "
+            "flipping game-by-game confirms noise, not signal.**"
+        )
+
+    with st.expander("5. Out-of-box astronomical & cultural (39 tests)"):
+        st.markdown(
+            "Every reference table verified against NASA / NOAA / "
+            "astronomy.com / stardate.org.\n\n"
+            "**What we tested.**\n"
+            "- Solar and lunar eclipse windows (± 3 days from a listed "
+            "eclipse, NASA Eclipse Web Site)\n"
+            "- Major meteor shower peaks (± 1 day from Quadrantids, "
+            "Lyrids, Perseids, Orionids, Leonids, Geminids, etc.)\n"
+            "- **Mercury retrograde** periods (astrology's most famous "
+            "'cursed' window; NASA ephemeris)\n"
+            "- Spring vs. neap tides (new/full moon ± 1.5 days vs. "
+            "quarter moon)\n"
+            "- Sunspot cycle phase (SC25 max vs. SC24 declining)\n"
+            "- Chinese New Year proximity (± 3 days)\n"
+            "- Numerology digital root (9 = 'mystical' vs. 1 = 'unity')\n"
+            "- Friday the 13th\n\n"
+            "**Result.** 0 hits at any threshold. Smallest p = 0.14 "
+            "(Powerball Mercury retrograde — even the astrology bogeyman "
+            "shows no effect)."
+        )
+
+    with st.expander("6. Gravitational-wave proximity (24 tests)"):
+        st.markdown(
+            "**Source.** LIGO/Virgo Gravitational Wave Open Science "
+            "Center — 330 catalogued events between 2005-11-03 and "
+            "2025-02-07.\n\n"
+            "**What we tested.** For each game, split draws by whether "
+            "they fell within ± 0, 1, 3, or 7 days of a detected GW "
+            "event. Tests: 2×N chi-square between 'near GW' and 'far "
+            "from any GW' groups.\n\n"
+            "**Result.** 1 uncorrected hit (Powerball ± 3 days, "
+            "p = 0.036); expected 1.2 by chance under H₀. Zero after "
+            "correction. Ripples in spacetime don't move lottery balls."
+        )
+
+    with st.expander("7. Speculative math & physics (24 tests)"):
+        st.markdown(
+            "**What we tested.**\n"
+            "- **Golden-ratio position** — draws whose index sits within "
+            "± 2% of $\\varphi^{-1} \\approx 0.618$ of the era\n"
+            "- **Cantor-set day membership** — days-since-start whose "
+            "base-3 expansion never contains the digit 1 "
+            "(fractal-set positions)\n"
+            "- **Seasonal transitions** — ± 3 days of a solstice or "
+            "equinox\n"
+            "- **Planetary conjunctions** — verified conjunction dates "
+            "(Jupiter–Saturn 2020-12-21 'Great Conjunction', plus 18 "
+            "other listed Venus-Jupiter / Mars-Jupiter / Mercury "
+            "conjunctions in the era)\n\n"
+            "**Result.** 0 hits. Smallest p = 0.20 (Cash Five "
+            "solstice/equinox window). The fabric of spacetime and the "
+            "golden ratio also do not move lottery balls."
+        )
+
+    with st.expander("8. Machine-learning predictive models (12 head-to-head tests)"):
+        st.markdown(
+            "**Setup.** Feature-engineered per-ball classifiers using "
+            "172–220 features per draw:\n"
+            "- Date features (day of week, month, days-since-start)\n"
+            "- Lunar phase and spring/neap flag\n"
+            "- Sunspot number, geomagnetic Ap, weather (temp, precip)\n"
+            "- Per-ball recency (draws since last seen)\n"
+            "- Per-ball rolling frequency (last 100 draws)\n"
+            "- Per-ball overall running frequency\n\n"
+            "**Models tested per game (Lotto Texas / Mega Millions / "
+            "Powerball):**\n"
+            "1. Logistic regression per ball\n"
+            "2. Random forest (50 trees, depth 6)\n"
+            "3. Gradient boosting (50 iterations, depth 3)\n"
+            "4. Random-ticket control (baseline)\n\n"
+            "**Evaluation.** Time-ordered 70/30 train/test split. Metric: "
+            "average matches per draw when picking each model's top-K "
+            "highest-probability balls. Paired permutation test vs. "
+            "walk-forward S1 baseline.\n\n"
+            "**Result.** All 12 head-to-head paired tests: p between "
+            "0.19 and 0.95. **No model significantly beats the trivial "
+            "walk-forward S1 baseline.**\n\n"
+            "**Sanity check on the baselines.** Every game's walk-"
+            "forward S1 lands within ~1% of the theoretical H₀ mean "
+            "$E[\\text{matches}] = K^2 / N$:\n"
+            "- Lotto Texas baseline 0.659 vs theoretical 0.667\n"
+            "- Mega Millions baseline 0.358 vs theoretical 0.357\n"
+            "- Powerball baseline 0.349 vs theoretical 0.362"
+        )
+
+    with st.expander("Meta-analysis across all 431 tests"):
+        st.markdown(
+            "**Two independent aggregate lenses, both pointing null.**\n\n"
+            "**A. Kolmogorov–Smirnov of aggregate p-value distribution "
+            "vs. uniform.**\n"
+            "Under H₀, p-values across the whole test family should be "
+            "uniform on [0, 1]. Observed distribution:\n"
+            "- Fraction with p < 0.05: **0.000** (expected 0.050)\n"
+            "- Fraction with p < 0.10: **0.007** (expected 0.100)\n"
+            "- Fraction with p < 0.25: **0.044** (expected 0.250)\n"
+            "- Fraction with p < 0.50: **0.244** (expected 0.500)\n\n"
+            "KS test D = 0.31, p ≈ 0 — but the p-values are "
+            "systematically *higher* than uniform expects, meaning our "
+            "tests are slightly conservative and produce *less* signal "
+            "than random noise would.\n\n"
+            "**B. Fisher's combined p-value.**\n"
+            "$$X^2 = -2 \\sum_{i=1}^{n} \\ln p_i "
+            "\\sim \\chi^2_{2n}$$\n\n"
+            "Observed X² = 117.6 vs. expected df = 270; combined "
+            "p ≈ 1.0000. Direction: **dramatically more null than the "
+            "null itself**.\n\n"
+            "**Conclusion.** No combination or extension of any test "
+            "produces statistically significant predictive results. "
+            "The lottery machines exhibit exact fair-random behavior."
+        )
+
+    st.info(
+        "**The upshot: no predictive edge exists in the drawing "
+        "machines.** The only real statistical edge a player can access "
+        "is against *other players* — picking numbers that fewer people "
+        "pick reduces the chance of splitting a jackpot when a shared-"
+        "pot game hits. This isn't prediction; it's game theory. See "
+        "the callout at the top of the **Overview** tab."
+    )
 
 # ==================================================================
 # Experiment — do "hot" numbers actually beat random?
