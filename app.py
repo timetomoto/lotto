@@ -420,10 +420,17 @@ def render_overview_card(g_name: str):
     ROLLING_JACKPOT_GAMES = {"Lotto Texas", "Mega Millions", "Powerball",
                               "Texas Two Step"}
     if g_name in ROLLING_JACKPOT_GAMES and g_cfg.game_type == "kn":
-        anti = anti_collision_sequence(g_cfg)
+        anti = anti_collision_sequence(g_cfg, draws=era_d)
         anti_bonus = anti_collision_bonus(g_cfg)
         font_rem = max(0.95, 1.8 - 0.07 * len(anti))
-        seq_html = " ".join(f"<code>{n:>2}</code>" for n in anti)
+        # Inline blue on every <code> — Streamlit's default code CSS
+        # (grey text + light background) beats an outer-div color rule.
+        code_style = ("color:#60a5fa;background:rgba(96,165,250,0.08);"
+                      "padding:0.05rem 0.35rem;border-radius:4px;"
+                      "font-weight:700;")
+        seq_html = " ".join(
+            f"<code style='{code_style}'>{n:>2}</code>" for n in anti
+        )
         st.markdown(
             "**🎯 Winning strategy** "
             "<span style='opacity:0.65;font-size:0.85em;'>"
@@ -432,9 +439,9 @@ def render_overview_card(g_name: str):
             unsafe_allow_html=True,
         )
         st.markdown(
-            f"<div style='font-size:{font_rem:.2f}rem;font-weight:600;"
+            f"<div style='font-size:{font_rem:.2f}rem;"
             f"font-family:monospace;white-space:nowrap;overflow-x:auto;"
-            f"color:#60a5fa;padding:0.2rem 0;'>{seq_html}</div>",
+            f"padding:0.2rem 0;'>{seq_html}</div>",
             unsafe_allow_html=True,
         )
         if anti_bonus is not None:
@@ -442,17 +449,22 @@ def render_overview_card(g_name: str):
                 f"<div style='font-size:0.9rem;opacity:0.85;"
                 f"margin-top:0.2rem;'>"
                 f"+ <b>{g_cfg.bonus_label}</b>: "
-                f"<code style='color:#60a5fa;'>{anti_bonus}</code>"
+                f"<code style='{code_style}'>{anti_bonus}</code>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
         st.caption(
-            f"Avoids balls 1–31 (over-picked because of birthdays), lucky "
-            f"numbers (7, 11, 13, 17, 21, 23, 27), and multiples of 5. "
-            f"S1 below contains {birthday_ball_count(s1)} birthday-range "
-            f"balls for comparison. This ticket wins the jackpot at "
-            f"exactly the same rate as any other ticket — it just doesn't "
-            f"share the prize with as many other winners if it does."
+            f"Blends S1 prediction (most-frequent historically) with "
+            f"collision avoidance: takes the top-frequency balls that "
+            f"still sit outside 1–31 (birthday range), the popular "
+            f"lucky-number set (7, 11, 13, 17, 21, 23, 27), and "
+            f"multiples of 5 — spaced apart to avoid consecutive-number "
+            f"clumping. S1 below contains "
+            f"{birthday_ball_count(s1)} birthday-range balls for "
+            f"comparison. Win probability is identical to any other "
+            f"single ticket at 1 / C({g_cfg.n_main}, {g_cfg.k_main}); "
+            f"the edge is only in *expected payout given a win* by "
+            f"reducing prize-sharing risk."
         )
 
     st.markdown("**Most-frequent (S1)**")
@@ -648,11 +660,21 @@ with tab_overview:
             "- Multiples of 5 attract round-number bias\n"
             "- Sequences and patterns on the play slip are picked ~40× "
             "more than random selection would predict\n\n"
-            "Each card below shows a **collision-avoidance alternative** "
-            "for jackpot-shared games: K numbers optimized to be "
-            "*unpopular*, so if the ticket wins, the pot is less likely "
-            "to be shared. Same odds of winning as any other ticket — "
-            "different expected payout given a win."
+            "Each card below (for jackpot-shared games) shows a "
+            "**🎯 Winning strategy** sequence above the S1 numbers. It "
+            "blends the S1 side (most-frequent balls historically drawn "
+            "in that specific game) with the collision-avoidance filter "
+            "— the picks are the *top-frequency balls in that game's own "
+            "history that still fall outside the birthday range, avoid "
+            "lucky numbers and multiples of 5, and are spaced apart to "
+            "avoid consecutive clumping*. Because each game's frequency "
+            "history is different, each game gets a distinct sequence — "
+            "not a copy-paste. For games with a rolling bonus pool "
+            "(Mega Ball, Powerball, Bonus Ball) the strategy also picks "
+            "the highest non-lucky non-round bonus number, which tends "
+            "to be under-picked relative to birthday-range bonus values. "
+            "Same odds of winning as any other ticket — different "
+            "expected payout given a win."
         )
 
     game_names = list(GAMES.keys())

@@ -73,20 +73,67 @@ def collision_risk_score(ball: int) -> float:
         score += 0.2            # round-number bias
     return score
 
-def anti_collision_sequence(game: GameConfig) -> tuple:
+def anti_collision_sequence(game: GameConfig, draws=None) -> tuple:
     """Return K numbers optimized to be UNPOPULAR — least likely to be
     picked by other players — so that if the ticket wins, it's less
-    likely to share the jackpot. Deterministic tie-break by ball number.
+    likely to share the jackpot.
+
+    Blends S1 "prediction" (most-frequent historically) with collision
+    avoidance so every game produces a *distinct* strategy tuned to its
+    own history — no more identical 32-33-34-… tickets across games.
+
+    Ranking priority (per ball):
+      1. Player-behavior risk (birthday-range / lucky-number / round-5)
+         — hard filter against the strongest documented biases.
+      2. Historical draw frequency (MOST-frequent first, S1-style) —
+         within the low-collision pool, favor balls that have hit more
+         often over the full era.
+      3. Spread constraint: reject picks adjacent (gap < 2) to already
+         chosen balls, discouraging clumped consecutive tickets.
+      4. Higher ball number as final tie-break (rare > common by pool
+         convention).
 
     Explicitly NOT a prediction. Win probability is identical to any
     other single ticket at 1 / C(N, K). This is only about *conditional*
     expected payout given a win, for games with rolling shared jackpots.
     """
     K, N = game.k_main, game.n_main
-    # Sort balls by (risk score asc, ball number asc)
-    ordered = sorted(range(1, N + 1),
-                     key=lambda b: (collision_risk_score(b), b))
-    return tuple(sorted(ordered[:K]))
+    freq: Counter = Counter()
+    if draws is not None:
+        for _, nums in draws:
+            freq.update(nums)
+
+    candidates = sorted(
+        range(1, N + 1),
+        key=lambda b: (
+            collision_risk_score(b),
+            -freq.get(b, 0),       # MOST historically-drawn first (S1 blend)
+            -b,                    # higher ball wins final tie-break
+        ),
+    )
+    # Greedy select K, preferring a min-gap-of-2 spread — but only when
+    # rejecting the neighbor still leaves enough SAME-collision-tier
+    # candidates to fill the ticket. Otherwise take the neighbor rather
+    # than dropping into the next (worse) collision tier. This is what
+    # kept Texas Two Step from falling back to birthday-range balls just
+    # because 34 was adjacent to 33.
+    picks: list = []
+    remaining = list(candidates)
+    while len(picks) < K and remaining:
+        b = remaining.pop(0)
+        if any(abs(b - p) < 2 for p in picks):
+            tier = collision_risk_score(b)
+            same_tier_left = sum(
+                1 for c in remaining
+                if collision_risk_score(c) == tier
+                and all(abs(c - p) >= 2 for p in picks)
+            )
+            need = K - len(picks)
+            if same_tier_left >= need:
+                # Enough same-tier non-adjacent options — skip this one.
+                continue
+        picks.append(b)
+    return tuple(sorted(picks))
 
 def anti_collision_bonus(game: GameConfig) -> "int | None":
     """Anti-collision pick for the bonus pool.
