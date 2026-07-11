@@ -18,6 +18,7 @@ from strategies import (
     s1_most_frequent, s4_least_frequent, s2_prng, s3_qrng,
     most_frequent_bonus, top_bonus_by_frequency,
     anti_collision_sequence, anti_collision_bonus, birthday_ball_count,
+    digit_anti_collision,
 )
 from stats_tests import (
     chi_square_ball_frequency, chi_square_per_position_digit,
@@ -323,20 +324,21 @@ with header_r:
 # Overview — one card per game
 # ==================================================================
 
-def _format_recent_line(draw_date, nums, s1, game_type):
-    """One row of the recent-draws list. Matches vs S1 are bold green.
-    - kn:    highlight ball if it's in the S1 set.
-    - digit: highlight digit at position i if it equals s1[i].
+def _format_recent_line(draw_date, nums, ref_seq, game_type):
+    """One row of the recent-draws list. Matches vs a reference ticket are
+    bold green. The reference is typically the Winning-strategy ticket.
+    - kn:    highlight ball if it's in the reference set.
+    - digit: highlight digit at position i if it equals ref_seq[i].
     Returns a raw HTML fragment (no <p>/<small> wrapper) so callers can pack
     multiple rows into a single tight container. Numbers use explicit CSS
     margin (not &nbsp;) so horizontal spacing is even and adjustable."""
-    s1_set = set(s1)
+    ref_set = set(ref_seq)
     parts = []
     for i, n in enumerate(nums):
         if game_type == "kn":
-            hit = n in s1_set
+            hit = n in ref_set
         else:
-            hit = i < len(s1) and n == s1[i]
+            hit = i < len(ref_seq) and n == ref_seq[i]
         if hit:
             parts.append(
                 f"<b style='color:#22c55e;margin-right:0.75rem;'>{n}</b>"
@@ -408,7 +410,9 @@ def render_overview_card(g_name: str):
 
     st.caption(
         f"{fmt} · {g_cfg.schedule} · {g_cfg.ticket_cost} · "
-        f"{len(era_d):,} draws since {g_cfg.era_start.strftime('%b %Y')}"
+        f"{len(era_d):,} draws in current format "
+        f"(since {g_cfg.era_start.strftime('%b %Y')} — earlier draws "
+        f"used a different K/N and are excluded)"
     )
     render_next_draw(g_cfg)
     # -------------- Winning strategy (anti-collision) ---------------
@@ -558,18 +562,30 @@ def render_overview_card(g_name: str):
                 unsafe_allow_html=True,
             )
 
+    # Reference sequence for the Last-5 highlight is the Winning strategy
+    # (anti-collision), NOT S1. anti_collision_sequence works for every
+    # k-of-N game; digit games use the digit-anti-collision variant.
+    if g_cfg.game_type == "kn":
+        highlight_seq = anti_collision_sequence(g_cfg, draws=era_d)
+    else:
+        highlight_seq = digit_anti_collision(
+            per_position_counters(era_d, g_cfg.k_main),
+            g_cfg.k_main, g_cfg.n_main,
+        )
+
     # Pack all 5 rows into a single tight container so each row's line-height
     # is controlled directly (avoids Streamlit's default paragraph margins).
     recent_rows_html = "".join(
         f"<div style='line-height:1.5;font-size:0.88rem;'>"
-        f"{_format_recent_line(dt, nums, s1, g_cfg.game_type)}"
+        f"{_format_recent_line(dt, nums, highlight_seq, g_cfg.game_type)}"
         f"</div>"
         for dt, nums in reversed(era_d[-5:])
     )
     st.markdown(
         f"<div style='margin-top:1rem;margin-bottom:1.1rem;'>"
         f"<b>Last 5 draws</b> "
-        f"<span style='opacity:0.7;'>(matches vs S1 in green)</span>"
+        f"<span style='opacity:0.7;'>"
+        f"(matches vs Winning strategy in green)</span>"
         f"<div style='margin-top:0.35rem;'>{recent_rows_html}</div>"
         f"</div>",
         unsafe_allow_html=True,
