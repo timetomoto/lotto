@@ -171,9 +171,17 @@ st.markdown(
       }
       /* Tab split — push the 5th tab and everything after it to the right
          (user tools: Overview / Schedule / Check Numbers / Purchases on
-         the left; analytical: Audit / Experiment / Methods on the right). */
-      div[data-baseweb="tab-list"] button[data-baseweb="tab"]:nth-child(5) {
-          margin-left: auto;
+         the left; analytical: Audit / Experiment / Methods on the right).
+         Uses multiple selectors so it survives Streamlit DOM updates —
+         Cloud sometimes runs a newer version than local where the
+         tab-list markup differs. `!important` beats Streamlit's own
+         defaults in whatever version is running. */
+      div[data-baseweb="tab-list"] > button[data-baseweb="tab"]:nth-of-type(5),
+      div[data-baseweb="tab-list"] > button[data-baseweb="tab"]:nth-child(5),
+      div[role="tablist"] > button[role="tab"]:nth-of-type(5),
+      div[role="tablist"] > button[role="tab"]:nth-child(5),
+      [data-testid="stTabs"] button:nth-of-type(5) {
+          margin-left: auto !important;
       }
       /* Overview cards live inside stColumn — Streamlit's default 1rem
          margin on every stElementContainer stacks up between st.markdown /
