@@ -250,6 +250,30 @@ def _get_draws_full_cached(game_key: str, sig: tuple):
 def get_draws_full(game_key: str):
     return _get_draws_full_cached(game_key, _csv_signature(game_key))
 
+
+def _ensure_purchase_caches_for(game_name: str) -> list:
+    """Make sure every strategy's walk-forward log for `game_name` is on
+    disk. Returns the list of (strategy, seconds_taken) tuples for any
+    (re)build that happened. Fast path: if all files exist for the
+    current CSV signature, returns [] instantly.
+
+    Called lazily when the Purchases tab actually needs a specific
+    game's logs, so we never pay the full 24-file warm cost upfront."""
+    from purchases import simulate_game, STRATEGIES, _cache_path
+    import time
+    rebuilt = []
+    for strat in STRATEGIES:
+        path = _cache_path(game_name, strat)
+        if os.path.exists(path):
+            continue
+        t = time.time()
+        try:
+            simulate_game(game_name, strategy=strat)
+            rebuilt.append((strat, time.time() - t))
+        except Exception:
+            pass  # tolerate one strategy failing; others still work
+    return rebuilt
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def _all_top_prizes_cached() -> dict:
     """Fetch every game's current top prize in ONE cached call, using a
@@ -1218,6 +1242,36 @@ with tab_purchases:
             recs = [{**r, "game": game_choice}
                     for r in simulate_game(game_choice, strategy=strategy)]
         return recs
+
+    # ---- Ensure the caches this filter needs are on disk BEFORE any
+    # `simulate_game` call fires from inside a tab render. Show explicit
+    # per-game progress so a slow first-visit rebuild doesn't look like
+    # the page has frozen (which is what triggered the "won't load"
+    # bug report — Cloud silently rebuilt 24 caches with no feedback).
+    games_to_warm = list(GAMES.keys()) if game_choice == "All games" else [game_choice]
+    warm_needed = []
+    for gname in games_to_warm:
+        from purchases import _cache_path as _pc
+        for strat in STRATEGIES:
+            if not os.path.exists(_pc(gname, strat)):
+                warm_needed.append(gname)
+                break
+    if warm_needed:
+        st.info(
+            f"Building walk-forward purchase logs for "
+            f"{len(warm_needed)} game{'s' if len(warm_needed) > 1 else ''} × "
+            f"3 strategies. This happens once per data refresh; "
+            f"subsequent visits are instant."
+        )
+        pbar = st.progress(0.0, text="Warming caches...")
+        for i, gname in enumerate(warm_needed):
+            pbar.progress(
+                i / len(warm_needed),
+                text=f"Warming {gname} ({i+1}/{len(warm_needed)})...",
+            )
+            _ensure_purchase_caches_for(gname)
+        pbar.progress(1.0, text="Cache warm complete.")
+        pbar.empty()
 
     def _render_strategy_view(strategy: str):
         with st.spinner(f"Computing {STRATEGY_LABEL[strategy]} log "
