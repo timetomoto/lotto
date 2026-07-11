@@ -341,7 +341,7 @@ def _format_recent_line(draw_date, nums, ref_seq, game_type):
             hit = i < len(ref_seq) and n == ref_seq[i]
         if hit:
             parts.append(
-                f"<b style='color:#22c55e;margin-right:0.75rem;'>{n}</b>"
+                f"<b style='color:#60a5fa;margin-right:0.75rem;'>{n}</b>"
             )
         else:
             parts.append(
@@ -585,7 +585,7 @@ def render_overview_card(g_name: str):
         f"<div style='margin-top:1rem;margin-bottom:1.1rem;'>"
         f"<b>Last 5 draws</b> "
         f"<span style='opacity:0.7;'>"
-        f"(matches vs Winning strategy in green)</span>"
+        f"(matches vs Winning strategy in blue)</span>"
         f"<div style='margin-top:0.35rem;'>{recent_rows_html}</div>"
         f"</div>",
         unsafe_allow_html=True,
