@@ -50,7 +50,11 @@ from checker import check_ticket
 CACHE_DIR = "data/purchase_cache"
 BURN_IN = 50
 
-STRATEGIES = ("s1", "s2", "strategy")
+# Iteration order drives the Purchases page: head-to-head column order,
+# per-strategy sub-tab order, and any cache-warming loop. Strategy first
+# because it's the primary anti-collision recommendation; S1 and S2 sit
+# beside it for reference.
+STRATEGIES = ("strategy", "s1", "s2")
 STRATEGY_LABEL = {
     "s1":       "S1 (most-frequent)",
     "s2":       "S2 (random)",
